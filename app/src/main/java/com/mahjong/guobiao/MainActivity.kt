@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.ExperimentalUnitApi
+import com.mahjong.guobiao.engine.DevelopmentAnalyzer
 import com.mahjong.guobiao.engine.fan.FanRegistry
 import com.mahjong.guobiao.engine.fan.FanRule
 import com.mahjong.guobiao.engine.fan.FanSettingsStore
@@ -197,6 +198,26 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     Text("${wt.tile}  剩余 ${wt.remainingCount} 张", fontSize = 15.sp)
                     Text(wt.possibleFanNames.joinToString(" "), fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 }
+            }
+        } else if (state.developmentPaths.isNotEmpty()) {
+            SectionHeader("发展方向（摸牌 → 听牌，按概率排序）")
+            Text("总剩余: ${state.totalRemaining} 张", fontSize = 12.sp, color = Color.Gray)
+            state.developmentPaths.take(15).forEach { path ->
+                val label = if (path.improvementType == DevelopmentAnalyzer.ImprovementType.TO_WIN) "→ 和牌" else
+                    if (path.resultingWaits.isNotEmpty()) "→ 听 ${path.resultingWaits.joinToString("") { it.toString() }}" else ""
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    color = Color.Transparent,
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("摸 ${path.drawTile}  剩${path.remainingCount}张", fontSize = 14.sp)
+                        Text("${path.probabilityPercent} $label", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+            }
+            if (state.developmentPaths.size > 15) {
+                Text("... 共 ${state.developmentPaths.size} 条路径，仅展示前 15", fontSize = 11.sp, color = Color.Gray)
             }
         }
     }

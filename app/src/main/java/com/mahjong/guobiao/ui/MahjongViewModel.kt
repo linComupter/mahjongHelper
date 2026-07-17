@@ -3,6 +3,7 @@ package com.mahjong.guobiao.ui
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mahjong.guobiao.engine.DevelopmentAnalyzer
 import com.mahjong.guobiao.engine.RulesEngine
 import com.mahjong.guobiao.engine.fan.FanSettingsStore
 import com.mahjong.guobiao.engine.fan.WinInfo
@@ -27,10 +28,19 @@ data class WaitingTileUi(
     val possibleFanNames: List<String>
 )
 
+/** 发展路径展示。 */
+data class DevelopmentPathUi(
+    val drawTile: TileType,
+    val remainingCount: Int,
+    val probabilityPercent: String,       // 格式化概率 "12.3%"
+    val resultingWaits: List<TileType>,   // 摸到改进牌后听哪些牌
+    val improvementType: DevelopmentAnalyzer.ImprovementType
+)
+
 /** UI 状态。 */
 data class MahjongUiState(
     val concealed: List<TileType> = emptyList(),
-    val discards: List<TileType> = emptyList(),         // 全场牌河（简化：合并4家）
+    val discards: List<TileType> = emptyList(),
     val melds: List<Meld> = emptyList(),
     val selfSeat: PlayerSeat = PlayerSeat.EAST,
     val prevailingWind: PlayerSeat = PlayerSeat.EAST,
@@ -39,6 +49,9 @@ data class MahjongUiState(
     val possibleFans: List<String> = emptyList(),
     val isWin: Boolean = false,
     val totalFan: Int = 0,
+    val isTenpai: Boolean = false,
+    val developmentPaths: List<DevelopmentPathUi> = emptyList(),
+    val totalRemaining: Int = 0,
     val message: String = ""
 )
 
@@ -130,44 +143,64 @@ class MahjongViewModel : ViewModel() {
             val hand = Hand(concealed = s.concealed, melds = s.melds)
             val tableState = buildTableState(s)
 
-            if (!hand.isValidWinSize() && !hand.isValidTenpaiSize()) {
-                _state.value = s.copy(
-                    message = "暗手张数不符：当前 ${hand.concealed.size} 张，需 13(听牌) 或 14(和牌)"
-                )
-                return@launch
-            }
+            val tenpaiSize = hand.concealedCountForTenpai()
+            val winSize = hand.concealedCountForWin()
+            val size = hand.concealed.size
 
-            val result = engine.fullAnalysis(hand, tableState, WinInfo(
-                winTile = s.concealed.lastOrNull() ?: TileType.EAST,
-                method = s.winMethod,
-                selfSeat = s.selfSeat,
-                prevailingWind = s.prevailingWind
-            ))
+            // 听牌态 / 和牌态
+            if (size == tenpaiSize || size == winSize) {
+                val result = engine.fullAnalysis(hand, tableState, WinInfo(
+                    winTile = s.concealed.lastOrNull() ?: TileType.EAST,
+                    method = s.winMethod,
+                    selfSeat = s.selfSeat,
+                    prevailingWind = s.prevailingWind
+                ))
 
-            if (result.isWin) {
-                val best = result.fanResults.maxByOrNull { it.second.totalFan }
-                val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
+                if (result.isWin) {
+                    val best = result.fanResults.maxByOrNull { it.second.totalFan }
+                    val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
+                    _state.value = s.copy(
+                        isWin = true, isTenpai = false,
+                        waitingTiles = emptyList(), possibleFans = fans,
+                        totalFan = best?.second?.totalFan ?: 0,
+                        developmentPaths = emptyList(),
+                        message = if (best?.second?.meetsMinimum == true) "和牌！合计 ${best.second.totalFan} 番" else "和牌但不足 8 番起和（${best?.second?.totalFan} 番）"
+                    )
+                } else {
+                    val waits = result.waitingTiles.map { wt ->
+                        WaitingTileUi(
+                            tile = wt.tile, remainingCount = wt.remainingCount,
+                            possibleFanNames = wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" }
+                        )
+                    }.sortedByDescending { it.remainingCount }
+                    _state.value = s.copy(
+                        isWin = false, isTenpai = true,
+                        waitingTiles = waits, possibleFans = emptyList(), totalFan = 0,
+                        developmentPaths = emptyList(),
+                        message = if (waits.isEmpty()) "未听牌" else "听 ${waits.size} 张"
+                    )
+                }
+            } else if (size in 1 until tenpaiSize) {
+                // 非听牌态 → 发展分析
+                val dev = DevelopmentAnalyzer.analyze(hand, tableState)
+                val paths = dev.improvements.map { imp ->
+                    DevelopmentPathUi(
+                        drawTile = imp.drawTile,
+                        remainingCount = imp.remainingCount,
+                        probabilityPercent = "%.1f%%".format(imp.probability * 100),
+                        resultingWaits = imp.resultingWaits,
+                        improvementType = imp.improvementType
+                    )
+                }
                 _state.value = s.copy(
-                    isWin = true,
-                    waitingTiles = emptyList(),
-                    possibleFans = fans,
-                    totalFan = best?.second?.totalFan ?: 0,
-                    message = if (best?.second?.meetsMinimum == true) "和牌！合计 ${best.second.totalFan} 番" else "和牌但不足 8 番起和（${best?.second?.totalFan} 番）"
+                    isWin = false, isTenpai = false,
+                    waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
+                    developmentPaths = paths, totalRemaining = dev.totalRemaining,
+                    message = "${dev.currentShanten}向听 — 共 ${paths.size} 种改进路径（总剩余 ${dev.totalRemaining} 张）"
                 )
             } else {
-                val waits = result.waitingTiles.map { wt ->
-                    WaitingTileUi(
-                        tile = wt.tile,
-                        remainingCount = wt.remainingCount,
-                        possibleFanNames = wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" }
-                    )
-                }.sortedByDescending { it.remainingCount }
                 _state.value = s.copy(
-                    isWin = false,
-                    waitingTiles = waits,
-                    possibleFans = emptyList(),
-                    totalFan = 0,
-                    message = if (waits.isEmpty()) "未听牌" else "听 ${waits.size} 张"
+                    message = "暗手 ${size} 张，需 ${tenpaiSize}(听牌) 或 ${winSize}(和牌)"
                 )
             }
         }

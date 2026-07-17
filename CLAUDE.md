@@ -47,8 +47,9 @@ v4/
 │       │   │   └── FanSettingsStore.kt  # User-overridable fan values (applied in FanScorer)
 │       │   ├── counter/
 │       │   │   └── TileCounter.kt   # Remaining = 4 − visible (hand+melds+river)
-│       │   └── RulesEngine.kt       # Top-level API
-│       └── test/                    # JUnit tests (89 total)
+│       ├── DevelopmentAnalyzer.kt   # Shanten + improvement-path analysis
+│       └── RulesEngine.kt           # Top-level API
+└── test/                            # JUnit tests (89 total)
 ├── app/                             # Android app module
 │   └── src/main/java/com/mahjong/guobiao/
 │       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则), tile picker, results
@@ -93,6 +94,14 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 
 ### Tenpai Calculation
 34-way enumeration: try adding each of 34 tile types, then call `WinChecker.getAllDecompositions()`. This naturally covers all special waiting patterns (single wait, edge wait, closed wait, 7-pairs wait, 13-orphans 13-way wait, etc.).
+
+### Hand Development Analysis (向听)
+`DevelopmentAnalyzer.analyze()` for non-tenpai hands:
+1. Calculate shanten (向听数) = `13 - 3*meldCount - concealed.size`
+2. 1-shanten: enumerate 34 tile types, check if adding makes hand tenpai (or win)
+3. For each improvement tile, record resulting waits + calculate probability
+4. Probability = `remainingCount(tile) / totalUnseen(136 - visible)`
+5. Results sorted by probability descending; UI shows top 15 paths with remaining counts.
 
 ### Fan Scoring
 Each `FanRule` has:
