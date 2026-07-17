@@ -206,7 +206,7 @@ fun FanSettingsScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(4.dp))
 
         LazyColumn {
-            items(rules) { rule ->
+            items(rules.filter { !FanSettingsStore.isHidden(it.id) || hideMode }) { rule ->
                 val effectiveValue = FanSettingsStore.getValue(rule)
                 val isOverridden = FanSettingsStore.hasOverride(rule.id)
                 val isHiddenItem = FanSettingsStore.isHidden(rule.id)
