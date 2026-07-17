@@ -45,6 +45,23 @@ data class FanTargetUi(
     val improvementTiles: List<DevelopmentPathUi>  // 达成此番种需要的摸牌
 )
 
+/** 替换式发展路径（弃X摸Y）。 */
+data class SwapPathUi(
+    val discardTile: TileType,
+    val drawTile: TileType,
+    val remainingCount: Int,
+    val probabilityPercent: String,
+    val resultingWaits: List<TileType>
+)
+
+/** 按番种聚合的替换目标。 */
+data class SwapTargetUi(
+    val name: String,
+    val fanValue: Int,
+    val probabilityPercent: String,
+    val swapPaths: List<SwapPathUi>
+)
+
 /** UI 状态。 */
 data class MahjongUiState(
     val concealed: List<TileType> = emptyList(),
@@ -60,6 +77,8 @@ data class MahjongUiState(
     val isTenpai: Boolean = false,
     val developmentPaths: List<DevelopmentPathUi> = emptyList(),
     val fanTargets: List<FanTargetUi> = emptyList(),
+    val swapTargets: List<SwapTargetUi> = emptyList(),
+    val isTenpaiNoFan: Boolean = false,
     val totalRemaining: Int = 0,
     val message: String = ""
 )
@@ -152,78 +171,93 @@ class MahjongViewModel : ViewModel() {
             val hand = Hand(concealed = s.concealed, melds = s.melds)
             val tableState = buildTableState(s)
 
+            val size = hand.concealed.size
             val tenpaiSize = hand.concealedCountForTenpai()
             val winSize = hand.concealedCountForWin()
-            val size = hand.concealed.size
 
-            // 听牌态 / 和牌态
-            if (size == tenpaiSize || size == winSize) {
+            // 和牌态
+            if (size == winSize && com.mahjong.guobiao.engine.win.WinChecker.isWin(hand)) {
                 val result = engine.fullAnalysis(hand, tableState, WinInfo(
                     winTile = s.concealed.lastOrNull() ?: TileType.EAST,
-                    method = s.winMethod,
-                    selfSeat = s.selfSeat,
-                    prevailingWind = s.prevailingWind
+                    method = s.winMethod, selfSeat = s.selfSeat, prevailingWind = s.prevailingWind
                 ))
+                val best = result.fanResults.maxByOrNull { it.second.totalFan }
+                val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
+                _state.value = s.copy(
+                    isWin = true, isTenpai = false,
+                    waitingTiles = emptyList(), possibleFans = fans,
+                    totalFan = best?.second?.totalFan ?: 0,
+                    developmentPaths = emptyList(), fanTargets = emptyList(), swapTargets = emptyList(),
+                    message = if (best?.second?.meetsMinimum == true) "和牌！合计 ${best.second.totalFan} 番"
+                        else "和牌但不足 8 番起和（${best?.second?.totalFan} 番）"
+                )
+                return@launch
+            }
 
-                if (result.isWin) {
-                    val best = result.fanResults.maxByOrNull { it.second.totalFan }
-                    val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
-                    _state.value = s.copy(
-                        isWin = true, isTenpai = false,
-                        waitingTiles = emptyList(), possibleFans = fans,
-                        totalFan = best?.second?.totalFan ?: 0,
-                        developmentPaths = emptyList(), fanTargets = emptyList(),
-                        message = if (best?.second?.meetsMinimum == true) "和牌！合计 ${best.second.totalFan} 番" else "和牌但不足 8 番起和（${best?.second?.totalFan} 番）"
-                    )
-                } else {
-                    val waits = result.waitingTiles.map { wt ->
-                        WaitingTileUi(
-                            tile = wt.tile, remainingCount = wt.remainingCount,
-                            possibleFanNames = wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" }
-                        )
+            // 听牌态（无副露时13张，有副露时更少）
+            if (size == tenpaiSize && hand.isValidTenpaiSize()) {
+                val waits = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand)
+                val hasValid = DevelopmentAnalyzer.hasValidTenpai(hand)
+                if (hasValid) {
+                    // 有效听牌 → 正常显示听牌
+                    val result = engine.fullAnalysis(hand, tableState, WinInfo(
+                        winTile = s.concealed.lastOrNull() ?: TileType.EAST,
+                        method = s.winMethod, selfSeat = s.selfSeat, prevailingWind = s.prevailingWind
+                    ))
+                    val waitsUi = result.waitingTiles.map { wt ->
+                        WaitingTileUi(wt.tile, wt.remainingCount,
+                            wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" })
                     }.sortedByDescending { it.remainingCount }
                     _state.value = s.copy(
                         isWin = false, isTenpai = true,
-                        waitingTiles = waits, possibleFans = emptyList(), totalFan = 0,
-                        developmentPaths = emptyList(), fanTargets = emptyList(),
-                        message = if (waits.isEmpty()) "未听牌" else "听 ${waits.size} 张"
+                        waitingTiles = waitsUi, possibleFans = emptyList(), totalFan = 0,
+                        developmentPaths = emptyList(), fanTargets = emptyList(), swapTargets = emptyList(),
+                        message = "听 ${waits.size} 张"
+                    )
+                } else {
+                    // 听牌但无有效番种 → swap 分析
+                    val dev = DevelopmentAnalyzer.analyze(hand, tableState)
+                    val swaps = mapSwapTargets(dev.swapTargets)
+                    _state.value = s.copy(
+                        isWin = false, isTenpai = false,
+                        waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
+                        fanTargets = emptyList(), swapTargets = swaps, isTenpaiNoFan = true,
+                        message = "已听牌但无法达成8番起和 — 弃牌换牌可发展至："
                     )
                 }
-            } else if (size in 1 until tenpaiSize) {
-                // 非听牌态 → 发展分析
+                return@launch
+            }
+
+            // 非听牌 → 替换式分析
+            if (size in 1 until tenpaiSize) {
                 val dev = DevelopmentAnalyzer.analyze(hand, tableState)
-                val paths = dev.improvements.map { imp ->
-                    DevelopmentPathUi(
-                        drawTile = imp.drawTile,
-                        remainingCount = imp.remainingCount,
-                        probabilityPercent = "%.1f%%".format(imp.probability * 100),
-                        resultingWaits = imp.resultingWaits,
-                        improvementType = imp.improvementType
-                    )
-                }
-                val fanTargets = dev.fanTargets.map { ft ->
-                    FanTargetUi(
-                        name = ft.fanRule.name,
-                        fanValue = com.mahjong.guobiao.engine.fan.FanSettingsStore.getValue(ft.fanRule),
-                        probabilityPercent = "%.1f%%".format(ft.totalProbability * 100),
-                        improvementTiles = ft.improvementTiles.map { itil ->
-                            DevelopmentPathUi(itil.tile, itil.remainingCount, "%.1f%%".format(itil.probability * 100), itil.resultingWaits, DevelopmentAnalyzer.ImprovementType.TO_TENPAI)
-                        }
-                    )
-                }
+                val swaps = mapSwapTargets(dev.swapTargets)
                 _state.value = s.copy(
                     isWin = false, isTenpai = false,
                     waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
-                    developmentPaths = paths, fanTargets = fanTargets, totalRemaining = dev.totalRemaining,
-                    message = "${dev.currentShanten}向听 — ${fanTargets.size} 种牌型发展方向（总剩余 ${dev.totalRemaining} 张）"
+                    fanTargets = emptyList(), swapTargets = swaps, isTenpaiNoFan = false,
+                    totalRemaining = dev.totalRemaining,
+                    message = "${dev.currentShanten}向听 — 替换${dev.swapTargets.size}种牌型可发展（总剩余 ${dev.totalRemaining} 张）"
                 )
-            } else {
-                _state.value = s.copy(
-                    message = "暗手 ${size} 张，需 ${tenpaiSize}(听牌) 或 ${winSize}(和牌)"
-                )
+                return@launch
             }
+
+            _state.value = s.copy(message = "暗手 ${size} 张，需 ${tenpaiSize}(听牌) 或 ${winSize}(和牌)")
         }
     }
+
+    private fun mapSwapTargets(targets: List<com.mahjong.guobiao.engine.DevelopmentAnalyzer.SwapTarget>): List<SwapTargetUi> =
+        targets.map { st ->
+            SwapTargetUi(
+                name = st.fanRule.name,
+                fanValue = FanSettingsStore.getValue(st.fanRule),
+                probabilityPercent = "%.1f%%".format(st.totalProbability * 100),
+                swapPaths = st.swapPaths.map { sp ->
+                    SwapPathUi(sp.discardTile, sp.drawTile, sp.remainingCount,
+                        "%.1f%%".format(sp.probability * 100), sp.resultingWaits)
+                }
+            )
+        }
 
     // ── 副露管理 ──
 

@@ -96,13 +96,12 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 34-way enumeration: try adding each of 34 tile types, then call `WinChecker.getAllDecompositions()`. This naturally covers all special waiting patterns (single wait, edge wait, closed wait, 7-pairs wait, 13-orphans 13-way wait, etc.).
 
 ### Hand Development Analysis (向听)
-`DevelopmentAnalyzer.analyze()` for non-tenpai hands:
-1. Calculate shanten (向听数) = `13 - 3*meldCount - concealed.size`
-2. 1-shanten: enumerate 34 tile types, check if adding makes hand tenpai (or win)
-3. For each improvement tile: calculate resulting waits, then for each wait + improvement = winning hand, run FanScorer to detect reachable fan types
-4. Group improvement paths by fan type, sort by aggregate probability (sum of all improvement-tile probabilities)
-5. UI: fan target cards (name + 番数 + total probability) → tap to see popup with individual improvement tiles and their probabilities
-6. Probability = `remainingCount(tile) / totalUnseen(136 - visible)`
+`DevelopmentAnalyzer.analyze()`:
+1. **和牌态**：直接计分展示番种
+2. **听牌态**：检查是否有等待牌可达8番起和；有→正常展示听牌，无→进入替换分析
+3. **非听牌态**：替换式分析（弃一张手牌、摸一张新牌），枚举`distinct(concealed) × 34` 种替换组合，检查能否听牌
+
+替换分析输出按番种聚合：`SwapTarget` 含番种名、总概率、具体弃牌摸牌路径。每条路径含弃牌/摸牌/剩余张数/概率/后续听牌。
 
 ### Fan Scoring
 Each `FanRule` has:

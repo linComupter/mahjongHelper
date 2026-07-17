@@ -41,6 +41,7 @@ import com.mahjong.guobiao.model.MeldType
 import com.mahjong.guobiao.model.TileType
 import com.mahjong.guobiao.ui.FanTargetUi
 import com.mahjong.guobiao.ui.MahjongViewModel
+import com.mahjong.guobiao.ui.SwapTargetUi
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: MahjongViewModel
@@ -200,6 +201,47 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     Text(wt.possibleFanNames.joinToString(" "), fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 }
             }
+        } else if (state.swapTargets.isNotEmpty()) {
+            val label = if (state.isTenpaiNoFan) "已听牌但无法8番起和 — 点选牌型查看可替换的牌" else "弃一张摸一张可发展的牌型（点击查看详情）"
+            SectionHeader(label)
+            Text("总剩余: ${state.totalRemaining} 张", fontSize = 12.sp, color = Color.Gray)
+            var detailSwap by remember { mutableStateOf<SwapTargetUi?>(null) }
+            state.swapTargets.forEach { st ->
+                Surface(
+                    onClick = { detailSwap = st },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    color = Color(0xFFF0F4F8),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${st.name} (${st.fanValue}番)", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("${st.probabilityPercent}", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            detailSwap?.let { st ->
+                AlertDialog(
+                    onDismissRequest = { detailSwap = null },
+                    title = { Text("${st.name} (${st.fanValue}番) — 总概率 ${st.probabilityPercent}") },
+                    text = {
+                        Column {
+                            Text("弃一张 → 摸一张，可进入听牌态：", fontSize = 13.sp, color = Color.Gray)
+                            Spacer(Modifier.height(4.dp))
+                            st.swapPaths.forEach { sp ->
+                                val waitStr = if (sp.resultingWaits.isNotEmpty())
+                                    " → 听 ${sp.resultingWaits.joinToString("") { it.toString() }}" else ""
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("弃 ${sp.discardTile}→摸 ${sp.drawTile}  剩${sp.remainingCount}张", fontSize = 13.sp)
+                                    Text("${sp.probabilityPercent}$waitStr", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { detailSwap = null }) { Text("关闭") }
+                    }
+                )
+            }
         } else if (state.fanTargets.isNotEmpty()) {
             SectionHeader("可发展牌型（按概率排序，点击查看改进牌）")
             Text("总剩余: ${state.totalRemaining} 张", fontSize = 12.sp, color = Color.Gray)
@@ -217,7 +259,6 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            // 弹窗
             detailTarget?.let { ft ->
                 AlertDialog(
                     onDismissRequest = { detailTarget = null },
@@ -236,9 +277,7 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                             }
                         }
                     },
-                    confirmButton = {
-                        TextButton(onClick = { detailTarget = null }) { Text("关闭") }
-                    }
+                    confirmButton = { TextButton(onClick = { detailTarget = null }) { Text("关闭") } }
                 )
             }
         }
