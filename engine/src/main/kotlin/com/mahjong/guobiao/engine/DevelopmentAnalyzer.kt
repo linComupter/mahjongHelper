@@ -1,5 +1,9 @@
 package com.mahjong.guobiao.engine
 
+import com.mahjong.guobiao.engine.fan.FanContext
+import com.mahjong.guobiao.engine.fan.FanRule
+import com.mahjong.guobiao.engine.fan.FanScorer
+import com.mahjong.guobiao.engine.fan.WinInfo
 import com.mahjong.guobiao.engine.tenpai.TenpaiCalculator
 import com.mahjong.guobiao.engine.win.WinChecker
 import com.mahjong.guobiao.model.Hand
@@ -7,71 +11,62 @@ import com.mahjong.guobiao.model.TableState
 import com.mahjong.guobiao.model.TileType
 
 /**
- * 手牌发展方向分析：非听牌时计算向听数、改进牌、发展概率。
- *
- * 算法：
- *  1. 计算向听数 = 13 - 3*meldCount - concealed.size
- *  2. 1向听：枚举 34 种牌，若加牌后达到听牌态且能听牌即记为改进牌
- *  3. 概率 = 改进牌剩余张数 / 总剩余张数
+ * 手牌发展方向分析：向听数 → 改进牌 → 可达番种 → 概率。
  */
 object DevelopmentAnalyzer {
 
-    /** 单张改进牌的路径分析。 */
     data class ImprovementPath(
-        val drawTile: TileType,             // 摸到的改进牌
-        val remainingCount: Int,            // 该牌剩余张数
-        val probability: Double,            // 摸到该牌的概率
-        val resultingWaits: List<TileType>, // 摸到后听哪些牌
-        val improvementType: ImprovementType // 改进后状态
+        val drawTile: TileType,
+        val remainingCount: Int,
+        val probability: Double,
+        val resultingWaits: List<TileType>,
+        val improvementType: ImprovementType
     )
 
     enum class ImprovementType { TO_TENPAI, TO_WIN }
 
-    /** 总体发展分析结果。 */
-    data class DevelopmentResult(
-        val currentShanten: Int,            // 当前向听数（0=听牌, -1=和牌）
-        val totalRemaining: Int,            // 牌山中剩余总张数
-        val improvements: List<ImprovementPath> // 所有可改进手牌的路径（按概率降序）
+    /** 按番种聚合的发展目标。 */
+    data class FanTarget(
+        val fanRule: FanRule,                          // 可达番种
+        val totalProbability: Double,                  // 发展至此番种的总概率
+        val improvementTiles: List<ImprovementTile>    // 能进入此番种的所有摸牌路径
     )
 
-    /**
-     * 分析手牌发展方向。
-     * - 听牌态/和牌态返回 empty improvements
-     * - 非听牌态返回所有 1向听改进路径
-     */
+    data class ImprovementTile(
+        val tile: TileType,
+        val remainingCount: Int,
+        val probability: Double,
+        val resultingWaits: List<TileType>
+    )
+
+    data class DevelopmentResult(
+        val currentShanten: Int,
+        val totalRemaining: Int,
+        val improvements: List<ImprovementPath>,
+        val fanTargets: List<FanTarget>  // 按总概率降序排列
+    )
+
     fun analyze(hand: Hand, tableState: TableState): DevelopmentResult {
-        val totalTiles = 136  // 国标用 136 张（不含花）
+        val totalTiles = 136
         val concealedSize = hand.concealed.size
         val meldCount = hand.meldCount
         val tenpaiSize = 13 - 3 * meldCount
 
-        // 计算向听数
         if (concealedSize >= tenpaiSize) {
-            // 已达听牌态或和牌态
-            val isWin = if (concealedSize == tenpaiSize + 1) {
-                WinChecker.isWin(hand)
-            } else false
+            val isWin = concealedSize == tenpaiSize + 1 && WinChecker.isWin(hand)
             return DevelopmentResult(
-                currentShanten = if (isWin) -1 else 0,
-                totalRemaining = calcRemainingTotal(hand, tableState, totalTiles),
-                improvements = emptyList()
+                if (isWin) -1 else 0, calcRemainingTotal(hand, tableState, totalTiles),
+                emptyList(), emptyList()
             )
         }
 
         val shanten = tenpaiSize - concealedSize
-
-        // 仅支持 1向听分析（更深向听枚举量太大）
         if (shanten != 1) {
-            return DevelopmentResult(
-                currentShanten = shanten,
-                totalRemaining = calcRemainingTotal(hand, tableState, totalTiles),
-                improvements = emptyList()
-            )
+            return DevelopmentResult(shanten, calcRemainingTotal(hand, tableState, totalTiles), emptyList(), emptyList())
         }
 
-        // 1向听：枚举摸牌 → 检查是否进入听牌态
-        val improvements = mutableListOf<ImprovementPath>()
         val totalRemaining = calcRemainingTotal(hand, tableState, totalTiles)
+        val improvements = mutableListOf<ImprovementPath>()
 
         for (t in TileType.ALL_NON_FLOWER) {
             val remaining = 4 - visibleCount(t, hand, tableState)
@@ -80,53 +75,71 @@ object DevelopmentAnalyzer {
             val newHand = hand.withConcealed((hand.concealed + t).sorted())
             if (!newHand.isValidTenpaiSize()) continue
 
-            // 检查是否听牌（或直接和牌）
             val isWin = WinChecker.isWin(newHand)
             val waits = if (isWin) emptyList() else TenpaiCalculator.waitingTiles(newHand)
 
             if (isWin || waits.isNotEmpty()) {
-                val prob = remaining.toDouble() / totalRemaining
-                improvements.add(ImprovementPath(
-                    drawTile = t,
-                    remainingCount = remaining,
-                    probability = prob,
-                    resultingWaits = waits,
-                    improvementType = if (isWin) ImprovementType.TO_WIN else ImprovementType.TO_TENPAI
-                ))
+                improvements.add(ImprovementPath(t, remaining, remaining.toDouble() / totalRemaining, waits, if (isWin) ImprovementType.TO_WIN else ImprovementType.TO_TENPAI))
+            }
+        }
+        improvements.sortByDescending { it.probability }
+
+        // 按番种聚合
+        val fanTargets = groupByFans(hand, improvements)
+
+        return DevelopmentResult(shanten, totalRemaining, improvements, fanTargets)
+    }
+
+    /** 将改进路径按可达番种聚合。 */
+    private fun groupByFans(hand: Hand, improvements: List<ImprovementPath>): List<FanTarget> {
+        // fanRule.id -> list of ImprovementTile
+        val fanMap = mutableMapOf<String, MutableList<ImprovementTile>>()
+
+        for (imp in improvements) {
+            // 摸 imp.drawTile 后听 imp.resultingWaits，每个 wait 可成和牌
+            for (wait in imp.resultingWaits) {
+                val winHand = hand.withConcealed((hand.concealed + imp.drawTile + wait).sorted())
+                if (!winHand.isValidWinSize()) continue
+                val decomps = WinChecker.getAllDecompositions(winHand)
+                if (decomps.isEmpty()) continue
+                // 取第一个分解检测番种
+                val ctx = FanContext(decomps.first(), winHand, WinInfo(wait))
+                val result = FanScorer.score(ctx)
+                for (rule in result.allDetected) {
+                    fanMap.getOrPut(rule.id) { mutableListOf() }.add(
+                        ImprovementTile(imp.drawTile, imp.remainingCount, imp.probability, imp.resultingWaits)
+                    )
+                }
             }
         }
 
-        improvements.sortByDescending { it.probability }
-        return DevelopmentResult(shanten, totalRemaining, improvements)
+        return fanMap.entries.map { (ruleId, tiles) ->
+            // 去重：同一摸牌可能通过不同 wait 到达同番种，但概率只算一次
+            val uniqueTiles = tiles.distinctBy { it.tile }
+            val totalProb = uniqueTiles.sumOf { it.probability }
+            val rule = com.mahjong.guobiao.engine.fan.FanRegistry.byId(ruleId) ?: return@map null
+            FanTarget(rule, totalProb, uniqueTiles.sortedByDescending { it.probability })
+        }.filterNotNull().sortedByDescending { it.totalProbability }
     }
 
-    /** 计算牌山中剩余总张数。 */
     private fun calcRemainingTotal(hand: Hand, tableState: TableState, total: Int): Int {
         var visible = 0
         for (t in TileType.ALL_NON_FLOWER) {
-            // 自家暗手+副露
             var v = hand.concealed.count { it == t } + hand.melds.flatMap { it.tiles }.count { it == t }
-            // 全场牌河+他家副露+花
             for (p in tableState.players) {
-                if (p.seat == tableState.selfSeat) {
-                    v += p.discards.count { it == t }
-                } else {
-                    v += p.visibleCount(t)
-                }
+                if (p.seat == tableState.selfSeat) v += p.discards.count { it == t }
+                else v += p.visibleCount(t)
             }
-            visible += minOf(v, 4)  // cap at 4
+            visible += minOf(v, 4)
         }
         return (total - visible).coerceAtLeast(0)
     }
 
     private fun visibleCount(tile: TileType, hand: Hand, tableState: TableState): Int {
-        var v = hand.concealed.count { it == tile } +
-                hand.melds.flatMap { it.tiles }.count { it == tile }
+        var v = hand.concealed.count { it == tile } + hand.melds.flatMap { it.tiles }.count { it == tile }
         for (p in tableState.players) {
-            if (p.seat == tableState.selfSeat)
-                v += p.discards.count { it == tile }
-            else
-                v += p.visibleCount(tile)
+            if (p.seat == tableState.selfSeat) v += p.discards.count { it == tile }
+            else v += p.visibleCount(tile)
         }
         return v
     }

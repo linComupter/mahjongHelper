@@ -32,9 +32,17 @@ data class WaitingTileUi(
 data class DevelopmentPathUi(
     val drawTile: TileType,
     val remainingCount: Int,
-    val probabilityPercent: String,       // 格式化概率 "12.3%"
-    val resultingWaits: List<TileType>,   // 摸到改进牌后听哪些牌
+    val probabilityPercent: String,
+    val resultingWaits: List<TileType>,
     val improvementType: DevelopmentAnalyzer.ImprovementType
+)
+
+/** 按番种聚合的发展目标。 */
+data class FanTargetUi(
+    val name: String,
+    val fanValue: Int,
+    val probabilityPercent: String,
+    val improvementTiles: List<DevelopmentPathUi>  // 达成此番种需要的摸牌
 )
 
 /** UI 状态。 */
@@ -51,6 +59,7 @@ data class MahjongUiState(
     val totalFan: Int = 0,
     val isTenpai: Boolean = false,
     val developmentPaths: List<DevelopmentPathUi> = emptyList(),
+    val fanTargets: List<FanTargetUi> = emptyList(),
     val totalRemaining: Int = 0,
     val message: String = ""
 )
@@ -163,7 +172,7 @@ class MahjongViewModel : ViewModel() {
                         isWin = true, isTenpai = false,
                         waitingTiles = emptyList(), possibleFans = fans,
                         totalFan = best?.second?.totalFan ?: 0,
-                        developmentPaths = emptyList(),
+                        developmentPaths = emptyList(), fanTargets = emptyList(),
                         message = if (best?.second?.meetsMinimum == true) "和牌！合计 ${best.second.totalFan} 番" else "和牌但不足 8 番起和（${best?.second?.totalFan} 番）"
                     )
                 } else {
@@ -176,7 +185,7 @@ class MahjongViewModel : ViewModel() {
                     _state.value = s.copy(
                         isWin = false, isTenpai = true,
                         waitingTiles = waits, possibleFans = emptyList(), totalFan = 0,
-                        developmentPaths = emptyList(),
+                        developmentPaths = emptyList(), fanTargets = emptyList(),
                         message = if (waits.isEmpty()) "未听牌" else "听 ${waits.size} 张"
                     )
                 }
@@ -192,11 +201,21 @@ class MahjongViewModel : ViewModel() {
                         improvementType = imp.improvementType
                     )
                 }
+                val fanTargets = dev.fanTargets.map { ft ->
+                    FanTargetUi(
+                        name = ft.fanRule.name,
+                        fanValue = com.mahjong.guobiao.engine.fan.FanSettingsStore.getValue(ft.fanRule),
+                        probabilityPercent = "%.1f%%".format(ft.totalProbability * 100),
+                        improvementTiles = ft.improvementTiles.map { itil ->
+                            DevelopmentPathUi(itil.tile, itil.remainingCount, "%.1f%%".format(itil.probability * 100), itil.resultingWaits, DevelopmentAnalyzer.ImprovementType.TO_TENPAI)
+                        }
+                    )
+                }
                 _state.value = s.copy(
                     isWin = false, isTenpai = false,
                     waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
-                    developmentPaths = paths, totalRemaining = dev.totalRemaining,
-                    message = "${dev.currentShanten}向听 — 共 ${paths.size} 种改进路径（总剩余 ${dev.totalRemaining} 张）"
+                    developmentPaths = paths, fanTargets = fanTargets, totalRemaining = dev.totalRemaining,
+                    message = "${dev.currentShanten}向听 — ${fanTargets.size} 种牌型发展方向（总剩余 ${dev.totalRemaining} 张）"
                 )
             } else {
                 _state.value = s.copy(

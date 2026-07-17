@@ -39,6 +39,7 @@ import com.mahjong.guobiao.engine.fan.FanSettingsStore
 import com.mahjong.guobiao.engine.fan.WinMethod
 import com.mahjong.guobiao.model.MeldType
 import com.mahjong.guobiao.model.TileType
+import com.mahjong.guobiao.ui.FanTargetUi
 import com.mahjong.guobiao.ui.MahjongViewModel
 
 class MainActivity : ComponentActivity() {
@@ -199,25 +200,46 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     Text(wt.possibleFanNames.joinToString(" "), fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 }
             }
-        } else if (state.developmentPaths.isNotEmpty()) {
-            SectionHeader("发展方向（摸牌 → 听牌，按概率排序）")
+        } else if (state.fanTargets.isNotEmpty()) {
+            SectionHeader("可发展牌型（按概率排序，点击查看改进牌）")
             Text("总剩余: ${state.totalRemaining} 张", fontSize = 12.sp, color = Color.Gray)
-            state.developmentPaths.take(15).forEach { path ->
-                val label = if (path.improvementType == DevelopmentAnalyzer.ImprovementType.TO_WIN) "→ 和牌" else
-                    if (path.resultingWaits.isNotEmpty()) "→ 听 ${path.resultingWaits.joinToString("") { it.toString() }}" else ""
+            var detailTarget by remember { mutableStateOf<FanTargetUi?>(null) }
+            state.fanTargets.forEach { ft ->
                 Surface(
+                    onClick = { detailTarget = ft },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
-                    color = Color.Transparent,
+                    color = Color(0xFFF0F4F8),
                     shape = RoundedCornerShape(4.dp)
                 ) {
-                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("摸 ${path.drawTile}  剩${path.remainingCount}张", fontSize = 14.sp)
-                        Text("${path.probabilityPercent} $label", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${ft.name} (${ft.fanValue}番)", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("${ft.probabilityPercent}", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                 }
             }
-            if (state.developmentPaths.size > 15) {
-                Text("... 共 ${state.developmentPaths.size} 条路径，仅展示前 15", fontSize = 11.sp, color = Color.Gray)
+            // 弹窗
+            detailTarget?.let { ft ->
+                AlertDialog(
+                    onDismissRequest = { detailTarget = null },
+                    title = { Text("${ft.name} (${ft.fanValue}番) — 总概率 ${ft.probabilityPercent}") },
+                    text = {
+                        Column {
+                            Text("摸以下牌可进入听牌态并达成此番种：", fontSize = 13.sp, color = Color.Gray)
+                            Spacer(Modifier.height(4.dp))
+                            ft.improvementTiles.forEach { tile ->
+                                val waitStr = if (tile.resultingWaits.isNotEmpty())
+                                    " → 听 ${tile.resultingWaits.joinToString("") { it.toString() }}" else ""
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("摸 ${tile.drawTile}  剩${tile.remainingCount}张", fontSize = 14.sp)
+                                    Text("${tile.probabilityPercent}$waitStr", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { detailTarget = null }) { Text("关闭") }
+                    }
+                )
             }
         }
     }

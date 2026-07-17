@@ -99,9 +99,10 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 `DevelopmentAnalyzer.analyze()` for non-tenpai hands:
 1. Calculate shanten (向听数) = `13 - 3*meldCount - concealed.size`
 2. 1-shanten: enumerate 34 tile types, check if adding makes hand tenpai (or win)
-3. For each improvement tile, record resulting waits + calculate probability
-4. Probability = `remainingCount(tile) / totalUnseen(136 - visible)`
-5. Results sorted by probability descending; UI shows top 15 paths with remaining counts.
+3. For each improvement tile: calculate resulting waits, then for each wait + improvement = winning hand, run FanScorer to detect reachable fan types
+4. Group improvement paths by fan type, sort by aggregate probability (sum of all improvement-tile probabilities)
+5. UI: fan target cards (name + 番数 + total probability) → tap to see popup with individual improvement tiles and their probabilities
+6. Probability = `remainingCount(tile) / totalUnseen(136 - visible)`
 
 ### Fan Scoring
 Each `FanRule` has:
