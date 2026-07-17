@@ -9,6 +9,7 @@ import com.mahjong.guobiao.engine.fan.WinInfo
 import com.mahjong.guobiao.engine.fan.WinMethod
 import com.mahjong.guobiao.model.Hand
 import com.mahjong.guobiao.model.Meld
+import com.mahjong.guobiao.model.MeldType
 import com.mahjong.guobiao.model.PlayerSeat
 import com.mahjong.guobiao.model.PlayerState
 import com.mahjong.guobiao.model.TableState
@@ -50,7 +51,9 @@ class MahjongViewModel : ViewModel() {
 
     fun addTile(tile: TileType) {
         val current = _state.value
-        if (current.concealed.size >= 14) return
+        // 暗手上限 = 14 - 3*meldCount（和牌态最多14张）
+        val maxConcealed = 14 - 3 * current.melds.size
+        if (current.concealed.size >= maxConcealed) return
         // 每种牌不超过4张（手牌+副露+牌河）
         val inConcealed = current.concealed.count { it == tile }
         val inMelds = current.melds.flatMap { m -> m.tiles }.count { it == tile }
@@ -168,6 +171,37 @@ class MahjongViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    // ── 副露管理 ──
+
+    fun addMeld(type: MeldType, tile: TileType) {
+        val current = _state.value
+        val meld = when (type) {
+            MeldType.PON -> Meld.pon(tile)
+            MeldType.CHI -> Meld.chi(tile)
+            MeldType.KAN_OPEN -> Meld.kanOpen(tile)
+            MeldType.KAN_CLOSED -> Meld.kanClosed(tile)
+            MeldType.KAN_ADDED -> Meld.kanAdded(tile)
+            else -> return
+        }
+        // 4张上限校验
+        for (t in meld.tiles) {
+            val total = current.concealed.count { it == t } +
+                    current.melds.flatMap { m -> m.tiles }.count { it == t } +
+                    current.discards.count { it == t }
+            if (total + 1 > 4) return
+        }
+        _state.value = current.copy(melds = current.melds + meld, message = "")
+    }
+
+    fun removeMeld(index: Int) {
+        val current = _state.value
+        if (index !in current.melds.indices) return
+        _state.value = current.copy(
+            melds = current.melds.toMutableList().apply { removeAt(index) },
+            message = ""
+        )
     }
 
     private fun buildTableState(s: MahjongUiState): TableState {

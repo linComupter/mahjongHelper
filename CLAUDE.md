@@ -52,7 +52,7 @@ v4/
 ├── app/                             # Android app module
 │   └── src/main/java/com/mahjong/guobiao/
 │       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则), tile picker, results
-│       └── ui/MahjongViewModel.kt  # MVVM: hand/discard state, 4-copy limit, clearHand/clearDiscards
+│       └── ui/MahjongViewModel.kt  # MVVM: hand/meld/discard state, 4-copy limit, addMeld/removeMeld, persistence
 ├── build.gradle.kts                 # Root: AGP 8.7.2 + Kotlin 1.9.22
 ├── settings.gradle.kts              # Includes :engine and :app
 ├── gradle.properties                # android.useAndroidX=true
@@ -117,7 +117,7 @@ Each `FanRule` has:
 - **全不靠/七星不靠**: Disabled in `AllNonAdjacentChecker` — the precise definition needs official rulebook verification. Current loose implementation caused false positives in tenpai (e.g., 13 orphans + 2m was incorrectly deemed a win).
 - **81 番種 coverage**: ~40 implemented (88番: 大四喜/大三元/绿一色/九莲宝灯/四杠/十三幺; 64番: 四暗刻/连七对; 24番: 清一色/七对/小四喜/小三元; 12番: 三暗刻/三杠/大于五/小于五/三风刻/三色三同顺/三同刻; 8番: 碰碰和/混一色/混幺九/妙手回春/海底捞月/抢杠; 6番: 断幺/暗杠/明杠/箭刻/圈风刻/门风刻/双箭刻; 4番: 不求人/全求人/边张/嵌张/双暗刻; 2番: 无字; 1番: 自摸/花牌). Remaining types (组合龙/全不靠 subtypes/step-ascending sequences etc.) need official rulebook verification.
 - **Fan values**: Based on commonly-cited GuoBiao distributions. Some values may differ across rulebook editions.
-- **副露 (Melds) input**: UI currently only supports concealed tiles + discards. Full chi/pon/kan input UI not yet implemented (ViewModel supports meld data).
+- **副露 (Melds) input**: UI supports 碰/吃/明杠/暗杠/加杠 via mode chips in the picker area. Meld creation checks 4-copy limit. Current melds shown between hand and picker grid, click to remove.
 - **ML tile recognition**: Phase 2 (not started).
 
 ## Design Decisions

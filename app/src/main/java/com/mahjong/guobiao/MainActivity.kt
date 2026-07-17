@@ -36,6 +36,7 @@ import com.mahjong.guobiao.engine.fan.FanRegistry
 import com.mahjong.guobiao.engine.fan.FanRule
 import com.mahjong.guobiao.engine.fan.FanSettingsStore
 import com.mahjong.guobiao.engine.fan.WinMethod
+import com.mahjong.guobiao.model.MeldType
 import com.mahjong.guobiao.model.TileType
 import com.mahjong.guobiao.ui.MahjongViewModel
 
@@ -107,19 +108,56 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
         }
         HandRow(state.concealed, onRemove = vm::removeTileAt)
 
+        // 副露区
+        if (state.melds.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            SectionHeader("副露（点副露可移除）")
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(state.melds.size) { idx ->
+                    val m = state.melds[idx]
+                    val label = when (m.type) {
+                        MeldType.PON -> "碰"
+                        MeldType.CHI -> "吃"
+                        MeldType.KAN_OPEN -> "明杠"
+                        MeldType.KAN_CLOSED -> "暗杠"
+                        MeldType.KAN_ADDED -> "加杠"
+                        else -> "?"
+                    }
+                    Surface(
+                        onClick = { vm.removeMeld(idx) },
+                        color = Color(0xFFE8E0D0),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text("$label ${m.tiles.joinToString("") { it.toString() }}",
+                            fontSize = 13.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(8.dp))
 
         // 牌型选择网格
-        SectionHeader("点牌加入手牌 / 记入牌河")
+        SectionHeader("点牌加入手牌 / 记入牌河 / 创建副露")
         var pickerMode by remember { mutableStateOf(PickerMode.HAND) }
+        var meldKind by remember { mutableStateOf<MeldType?>(null) }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            FilterChip(selected = pickerMode == PickerMode.HAND, onClick = { pickerMode = PickerMode.HAND }, label = { Text("加入手牌") })
-            FilterChip(selected = pickerMode == PickerMode.DISCARD, onClick = { pickerMode = PickerMode.DISCARD }, label = { Text("记入牌河") })
+            FilterChip(selected = pickerMode == PickerMode.HAND, onClick = { pickerMode = PickerMode.HAND; meldKind = null }, label = { Text("加入手牌") })
+            FilterChip(selected = pickerMode == PickerMode.DISCARD, onClick = { pickerMode = PickerMode.DISCARD; meldKind = null }, label = { Text("记入牌河") })
+            FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.PON, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.PON }, label = { Text("碰") })
+            FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.CHI, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.CHI }, label = { Text("吃") })
+            FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_OPEN, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_OPEN }, label = { Text("明杠") })
+            FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_CLOSED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_CLOSED }, label = { Text("暗杠") })
+            FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_ADDED }, label = { Text("加杠") })
         }
         TilePickerGrid(onPick = { tile ->
-            when (pickerMode) {
-                PickerMode.HAND -> vm.addTile(tile)
-                PickerMode.DISCARD -> vm.addDiscard(tile)
+            when {
+                pickerMode == PickerMode.MELD && meldKind != null -> {
+                    vm.addMeld(meldKind!!, tile)
+                    meldKind = null; pickerMode = PickerMode.HAND
+                }
+                pickerMode == PickerMode.HAND -> vm.addTile(tile)
+                pickerMode == PickerMode.DISCARD -> vm.addDiscard(tile)
             }
         })
 
@@ -350,4 +388,4 @@ fun DiscardRow(discards: List<TileType>, onRemove: (Int) -> Unit, onClear: () ->
     Text("点牌可移除，切换上方模式后点网格加入", fontSize = 11.sp, color = Color.Gray)
 }
 
-enum class PickerMode { HAND, DISCARD }
+enum class PickerMode { HAND, DISCARD, MELD }
