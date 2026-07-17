@@ -1,9 +1,10 @@
 package com.mahjong.guobiao.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mahjong.guobiao.engine.RulesEngine
-import com.mahjong.guobiao.engine.counter.TileCounter
+import com.mahjong.guobiao.engine.fan.FanSettingsStore
 import com.mahjong.guobiao.engine.fan.WinInfo
 import com.mahjong.guobiao.engine.fan.WinMethod
 import com.mahjong.guobiao.model.Hand
@@ -106,6 +107,19 @@ class MahjongViewModel : ViewModel() {
         _state.value = MahjongUiState()
     }
 
+    // ── 持久化 ──
+
+    fun loadSettings(context: Context) {
+        val prefs = context.getSharedPreferences("fan_settings", Context.MODE_PRIVATE)
+        val props = prefs.getString("fan_properties", "") ?: ""
+        if (props.isNotEmpty()) FanSettingsStore.loadFromProperties(props)
+    }
+
+    fun saveSettings(context: Context) {
+        val prefs = context.getSharedPreferences("fan_settings", Context.MODE_PRIVATE)
+        prefs.edit().putString("fan_properties", FanSettingsStore.toProperties()).apply()
+    }
+
     /** 分析当前手牌。 */
     fun analyze() {
         viewModelScope.launch(Dispatchers.Default) {
@@ -129,7 +143,7 @@ class MahjongViewModel : ViewModel() {
 
             if (result.isWin) {
                 val best = result.fanResults.maxByOrNull { it.second.totalFan }
-                val fans = best?.second?.counted?.map { "${it.name}(${it.value})" } ?: emptyList()
+                val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
                 _state.value = s.copy(
                     isWin = true,
                     waitingTiles = emptyList(),
@@ -142,7 +156,7 @@ class MahjongViewModel : ViewModel() {
                     WaitingTileUi(
                         tile = wt.tile,
                         remainingCount = wt.remainingCount,
-                        possibleFanNames = wt.possibleFans.map { "${it.name}(${it.value})" }
+                        possibleFanNames = wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" }
                     )
                 }.sortedByDescending { it.remainingCount }
                 _state.value = s.copy(

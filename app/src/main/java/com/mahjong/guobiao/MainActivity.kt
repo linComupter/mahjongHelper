@@ -40,9 +40,13 @@ import com.mahjong.guobiao.model.TileType
 import com.mahjong.guobiao.ui.MahjongViewModel
 
 class MainActivity : ComponentActivity() {
+    private lateinit var viewModel: MahjongViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val viewModel: MahjongViewModel by viewModels()
+        val vm: MahjongViewModel by viewModels()
+        viewModel = vm
+        viewModel.loadSettings(this)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -50,6 +54,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (::viewModel.isInitialized) viewModel.saveSettings(this)
     }
 }
 
@@ -162,22 +171,36 @@ fun FanSettingsScreen(modifier: Modifier = Modifier) {
     val rules = remember { FanRegistry.rules }
     var editRule by remember { mutableStateOf<FanRule?>(null) }
     var editValue by remember { mutableStateOf("") }
+    var hideMode by remember { mutableStateOf(false) }
 
-    // 强制刷新：每次渲染时重新读取 stored values
     var refreshKey by remember { mutableStateOf(0) }
     @Suppress("UNUSED_EXPRESSION")
-    refreshKey // 读取以帮助 Compose 跟踪
+    refreshKey
 
     Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
         Text("番种规则", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp))
-        Text("点选番种可调整番数，调整后在[手牌分析]中生效", fontSize = 13.sp, color = Color.Gray)
+        Text(
+            if (hideMode) "隐藏模式：点选番种即可隐藏，隐藏后不参与分析" else "点选番种可调整番数，调整后在[手牌分析]中生效",
+            fontSize = 13.sp, color = Color.Gray
+        )
 
         Spacer(Modifier.height(4.dp))
 
-        // 重置按钮
+        // 操作按钮行
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { FanSettingsStore.resetAll(); refreshKey++ }) { Text("重置所有番数") }
-            Text("已覆盖: ${FanSettingsStore.overriddenIds.size} 项", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.align(Alignment.CenterVertically))
+            TextButton(onClick = { FanSettingsStore.resetAll(); refreshKey++ }) { Text("重置所有") }
+
+            val hiddenCount = FanSettingsStore.hiddenIds.size
+            FilterChip(
+                selected = hideMode,
+                onClick = { hideMode = !hideMode },
+                label = { Text(if (hideMode) "退出隐藏" else "编辑隐藏") }
+            )
+
+            Text(
+                "覆盖:${FanSettingsStore.overriddenIds.size} 隐藏:$hiddenCount",
+                fontSize = 11.sp, color = Color.Gray, modifier = Modifier.align(Alignment.CenterVertically)
+            )
         }
 
         Spacer(Modifier.height(4.dp))
@@ -186,24 +209,42 @@ fun FanSettingsScreen(modifier: Modifier = Modifier) {
             items(rules) { rule ->
                 val effectiveValue = FanSettingsStore.getValue(rule)
                 val isOverridden = FanSettingsStore.hasOverride(rule.id)
+                val isHiddenItem = FanSettingsStore.isHidden(rule.id)
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 1.dp)
                         .clickable {
-                            editRule = rule
-                            editValue = effectiveValue.toString()
+                            if (hideMode) {
+                                FanSettingsStore.toggleHidden(rule.id)
+                                refreshKey++
+                            } else {
+                                editRule = rule
+                                editValue = effectiveValue.toString()
+                            }
                         },
-                    color = if (isOverridden) Color(0xFFFFF3E0) else Color.Transparent,
+                    color = when {
+                        isHiddenItem -> Color(0xFFE0E0E0)
+                        isOverridden -> Color(0xFFFFF3E0)
+                        else -> Color.Transparent
+                    },
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${rule.name}", fontSize = 14.sp)
+                        Text(
+                            if (isHiddenItem) "[隐藏] ${rule.name}" else rule.name,
+                            fontSize = 14.sp,
+                            color = if (isHiddenItem) Color.LightGray else Color.Black
+                        )
                         Text(
                             "$effectiveValue 番",
                             fontSize = 14.sp,
                             fontWeight = if (isOverridden) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isOverridden) MaterialTheme.colorScheme.primary else Color.DarkGray
+                            color = when {
+                                isHiddenItem -> Color.LightGray
+                                isOverridden -> MaterialTheme.colorScheme.primary
+                                else -> Color.DarkGray
+                            }
                         )
                     }
                 }

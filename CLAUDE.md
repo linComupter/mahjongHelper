@@ -13,6 +13,7 @@ Android app that analyzes a mahjong hand against Chinese Official (国标) rules
 - **Build**: Gradle 8.11.1, AGP 8.7.2, JDK 17
 - **Android SDK**: `E:\AndroidStudioSDK` (configured in `local.properties`)
 - **Engine tests**: JUnit 5 (89 tests, pure JVM — no Android device needed)
+- **Git**: `https://github.com/linComupter/mahjongHelper.git` (origin)
 
 ## Project Structure
 
@@ -55,7 +56,9 @@ v4/
 ├── build.gradle.kts                 # Root: AGP 8.7.2 + Kotlin 1.9.22
 ├── settings.gradle.kts              # Includes :engine and :app
 ├── gradle.properties                # android.useAndroidX=true
-└── local.properties                 # sdk.dir=E:\AndroidStudioSDK
+├── local.properties                 # sdk.dir=E:\AndroidStudioSDK
+├── .gitignore                       # Excludes build/, .gradle/, local.properties, *.apk
+└── CLAUDE.md                        # This file
 ```
 
 ## Key Commands
@@ -100,11 +103,14 @@ Each `FanRule` has:
 `FanScorer.score()`: detect all → remove subsumed → sum (using `FanSettingsStore.getValue()`) → check ≥8 minimum.
 
 ### Fan Settings
-`FanSettingsStore` (singleton, engine layer): user-overridable fan values (e.g., if a rulebook edition uses different values).
-- `getValue(rule)` → `overrides[rule.id] ?: rule.value`
-- `setOverride(ruleId, value)` → set custom value; value ≤ 0 clears override
-- `resetAll()` → clear all overrides
-- Fan settings page in app: scrollable list of all rules, tap to edit, overridden items highlighted in orange. Changes take effect immediately in analysis scoring.
+`FanSettingsStore` (singleton, engine layer):
+- `getValue(rule)` → overridden value or default
+- `setOverride(id, value)` → custom fan value; value ≤ 0 clears override
+- `isHidden(id)` / `setHidden(id, hide)` / `toggleHidden(id)` → hide rules from analysis
+- `toProperties()` / `loadFromProperties(text)` → serialization for SharedPreferences persistence
+- Persistence: ViewModel saves via SharedPreferences (`fan_settings.fan_properties`) in `onStop`, loads in `onCreate`
+- Fan settings page: two modes — tap to edit value, or "编辑隐藏" mode to toggle hidden state (hidden → filtered from `FanRegistry.detectAll`)
+- Hidden rules: grayed out in list, excluded from analysis scoring. Overrides: orange highlight. Both persisted.
 
 ## Known Limitations (MVP)
 
@@ -125,4 +131,4 @@ Each `FanRule` has:
 - **Bottom navigation**: Two tabs (手牌分析 / 番数规则) via `Scaffold` + `NavigationBar`. Simple state-based switching (no NavHost), since only 2 screens.
 - **4-copy limit enforced in ViewModel**: `addTile()` and `addDiscard()` both check hand+melds+discards ≤ 4 per tile type.
 - **Click-to-remove**: Both hand tiles and discard tiles are clickable for removal. Clear-all buttons for each.
-- **Fan overrides persisted in memory only** (MVP): `FanSettingsStore` uses an in-memory `MutableMap`. TODO: SharedPreferences persistence.
+- **Fan overrides persisted via SharedPreferences**: `FanSettingsStore.toProperties()` serializes to text; ViewModel saves on `onStop`, loads on `onCreate`.

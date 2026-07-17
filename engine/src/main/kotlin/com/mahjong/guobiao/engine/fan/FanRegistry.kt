@@ -62,6 +62,7 @@ object FanRegistry {
 
     fun byId(id: String): FanRule? = byId[id]
 
-    /** 检测上下文中成立的所有番种。 */
-    fun detectAll(ctx: FanContext): List<FanRule> = rules.filter { it.detect(ctx) }
+    /** 检测上下文中成立的所有番种（排除已隐藏的）。 */
+    fun detectAll(ctx: FanContext): List<FanRule> =
+        rules.filter { !FanSettingsStore.isHidden(it.id) && it.detect(ctx) }
 }
