@@ -45,13 +45,14 @@ data class FanTargetUi(
     val improvementTiles: List<DevelopmentPathUi>  // 达成此番种需要的摸牌
 )
 
-/** 替换式发展路径（弃X摸Y）。 */
+/** 替换式发展路径（弃多摸多）。 */
 data class SwapPathUi(
-    val discardTile: TileType,
-    val drawTile: TileType,
+    val discardTiles: List<TileType>,
+    val drawTiles: List<TileType>,
     val remainingCount: Int,
     val probabilityPercent: String,
-    val resultingWaits: List<TileType>
+    val resultingWaits: List<TileType>,
+    val swapCount: Int = 1
 )
 
 /** 按番种聚合的替换目标。 */
@@ -157,11 +158,16 @@ class MahjongViewModel : ViewModel() {
         val prefs = context.getSharedPreferences("fan_settings", Context.MODE_PRIVATE)
         val props = prefs.getString("fan_properties", "") ?: ""
         if (props.isNotEmpty()) FanSettingsStore.loadFromProperties(props)
+        val analysisProps = prefs.getString("analysis_properties", "") ?: ""
+        if (analysisProps.isNotEmpty()) com.mahjong.guobiao.engine.AnalysisSettings.loadFromProperties(analysisProps)
     }
 
     fun saveSettings(context: Context) {
         val prefs = context.getSharedPreferences("fan_settings", Context.MODE_PRIVATE)
-        prefs.edit().putString("fan_properties", FanSettingsStore.toProperties()).apply()
+        prefs.edit()
+            .putString("fan_properties", FanSettingsStore.toProperties())
+            .putString("analysis_properties", com.mahjong.guobiao.engine.AnalysisSettings.toProperties())
+            .apply()
     }
 
     /** 分析当前手牌。 */
@@ -189,7 +195,7 @@ class MahjongViewModel : ViewModel() {
                     totalFan = best?.second?.totalFan ?: 0,
                     developmentPaths = emptyList(), fanTargets = emptyList(), swapTargets = emptyList(),
                     message = if (best?.second?.meetsMinimum == true) "和牌！合计 ${best.second.totalFan} 番"
-                        else "和牌但不足 8 番起和（${best?.second?.totalFan} 番）"
+                        else "和牌但不足 1 番起和（${best?.second?.totalFan} 番）"
                 )
                 return@launch
             }
@@ -222,7 +228,7 @@ class MahjongViewModel : ViewModel() {
                         isWin = false, isTenpai = false,
                         waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
                         fanTargets = emptyList(), swapTargets = swaps, isTenpaiNoFan = true,
-                        message = "已听牌但无法达成8番起和 — 弃牌换牌可发展至："
+                        message = "已听牌但无法起和 — 弃${dev.maxDepthUsed}张换牌可发展至："
                     )
                 }
                 return@launch
@@ -237,7 +243,7 @@ class MahjongViewModel : ViewModel() {
                     waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
                     fanTargets = emptyList(), swapTargets = swaps, isTenpaiNoFan = false,
                     totalRemaining = dev.totalRemaining,
-                    message = "${dev.currentShanten}向听 — 替换${dev.swapTargets.size}种牌型可发展（总剩余 ${dev.totalRemaining} 张）"
+                    message = "${dev.currentShanten}向听 — 弃${dev.maxDepthUsed}换${dev.maxDepthUsed}，${dev.swapTargets.size}种牌型可发展（总剩余 ${dev.totalRemaining} 张）"
                 )
                 return@launch
             }
@@ -253,8 +259,8 @@ class MahjongViewModel : ViewModel() {
                 fanValue = FanSettingsStore.getValue(st.fanRule),
                 probabilityPercent = "%.1f%%".format(st.totalProbability * 100),
                 swapPaths = st.swapPaths.map { sp ->
-                    SwapPathUi(sp.discardTile, sp.drawTile, sp.remainingCount,
-                        "%.1f%%".format(sp.probability * 100), sp.resultingWaits)
+                    SwapPathUi(sp.discardTiles, sp.drawTiles, sp.remainingCount,
+                        "%.1f%%".format(sp.probability * 100), sp.resultingWaits, sp.swapCount)
                 }
             )
         }

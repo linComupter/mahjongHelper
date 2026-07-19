@@ -47,12 +47,13 @@ v4/
 │       │   │   └── FanSettingsStore.kt  # User-overridable fan values (applied in FanScorer)
 │       │   ├── counter/
 │       │   │   └── TileCounter.kt   # Remaining = 4 − visible (hand+melds+river)
-│       ├── DevelopmentAnalyzer.kt   # Shanten + improvement-path analysis
+│       ├── AnalysisSettings.kt  # Swap depth + persistence for analysis settings
+├── DevelopmentAnalyzer.kt   # Shanten + improvement-path analysis (multi-depth swap)
 │       └── RulesEngine.kt           # Top-level API
 └── test/                            # JUnit tests (89 total)
 ├── app/                             # Android app module
 │   └── src/main/java/com/mahjong/guobiao/
-│       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则), tile picker, results
+│       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则 / 分析规则), tile picker, results
 │       └── ui/MahjongViewModel.kt  # MVVM: hand/meld/discard state, 4-copy limit, addMeld/removeMeld, persistence
 ├── build.gradle.kts                 # Root: AGP 8.7.2 + Kotlin 1.9.22
 ├── settings.gradle.kts              # Includes :engine and :app
@@ -98,10 +99,21 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 ### Hand Development Analysis (向听)
 `DevelopmentAnalyzer.analyze()`:
 1. **和牌态**：直接计分展示番种
-2. **听牌态**：检查是否有等待牌可达8番起和；有→正常展示听牌，无→进入替换分析
-3. **非听牌态**：替换式分析（弃一张手牌、摸一张新牌），枚举`distinct(concealed) × 34` 种替换组合，检查能否听牌
+2. **听牌态**：检查是否有等待牌可达1番起和；有→正常展示听牌，无→进入替换分析
+3. **非听牌态**：替换式分析，深度由`AnalysisSettings.swapDepth`控制（1~3，默认1），枚举弃N张×摸N张的替换组合
+
+深度1：`distinct(concealed) × 34` 种组合
+深度2：`C(distinct,2) × C(34,2)` 组合，最多200条结果截断
+深度3：`C(distinct,3) × C(34,3)` 组合，最多200条结果截断
 
 替换分析输出按番种聚合：`SwapTarget` 含番种名、总概率、具体弃牌摸牌路径。每条路径含弃牌/摸牌/剩余张数/概率/后续听牌。
+
+### Analysis Settings
+`AnalysisSettings` (singleton, engine layer):
+- `swapDepth`: 1~3，控制替换式分析的弃摸张数
+- `toProperties()` / `loadFromProperties(text)`: 序列化持久化
+- 与 FanSettings 共用 SharedPreferences key `fan_settings`
+- UI: "分析规则" tab 提供 Slider 调节深度 + 性能提示
 
 ### Fan Scoring
 Each `FanRule` has:
@@ -109,7 +121,7 @@ Each `FanRule` has:
 - `subsumes`: Set of fan IDs that are NOT counted when this fan is detected (e.g., 大四喜 subsumes 碰碰和)
 - `detect(ctx)`: detection logic
 
-`FanScorer.score()`: detect all → remove subsumed → sum (using `FanSettingsStore.getValue()`) → check ≥8 minimum.
+`FanScorer.score()`: detect all → remove subsumed → sum (using `FanSettingsStore.getValue()`) → check ≥ 1 minimum.
 
 ### Fan Settings
 `FanSettingsStore` (singleton, engine layer):

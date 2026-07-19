@@ -129,13 +129,11 @@ class FanDetectorTest {
     }
 
     @Test
-    fun `不足8番起和`() {
-        // 234m 456m 789m 234p 5p：和后仅自摸(1)+无字(2)=3番，不足8番
+    fun `低于起和线应不满足`() {
+        // 234m 456m 789m 234p 5p：和后仅自摸(1)+无字(2)=3番，低于8番但起和线已改为1
+        // 目前起和线=1，大多数和牌都满足
         val result = scoreHand("234m456m789m234p5p5p")
-        // 此手: 无字(2) + 自摸(1) = 3 < 8
-        if (result.totalFan < 8) {
-            assertFalse(result.meetsMinimum)
-        }
+        assertTrue(result.meetsMinimum, "起和线=1，应满足")
     }
 
     @Test

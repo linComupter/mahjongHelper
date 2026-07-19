@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.ExperimentalUnitApi
+import com.mahjong.guobiao.engine.AnalysisSettings
 import com.mahjong.guobiao.engine.DevelopmentAnalyzer
 import com.mahjong.guobiao.engine.fan.FanRegistry
 import com.mahjong.guobiao.engine.fan.FanRule
@@ -85,12 +86,19 @@ fun MahjongApp(vm: MahjongViewModel) {
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 }
                 )
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = { Text("分析规则") },
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 }
+                )
             }
         }
     ) { innerPadding ->
         when (selectedTab) {
             0 -> AnalysisScreen(vm, Modifier.padding(innerPadding))
             1 -> FanSettingsScreen(Modifier.padding(innerPadding))
+            2 -> AnalysisSettingsScreen(Modifier.padding(innerPadding))
         }
     }
 }
@@ -202,7 +210,7 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                 }
             }
         } else if (state.swapTargets.isNotEmpty()) {
-            val label = if (state.isTenpaiNoFan) "已听牌但无法8番起和 — 点选牌型查看可替换的牌" else "弃一张摸一张可发展的牌型（点击查看详情）"
+            val label = if (state.isTenpaiNoFan) "已听牌但无法1番起和 — 点选牌型查看可替换的牌" else "弃一张摸一张可发展的牌型（点击查看详情）"
             SectionHeader(label)
             Text("总剩余: ${state.totalRemaining} 张", fontSize = 12.sp, color = Color.Gray)
             var detailSwap by remember { mutableStateOf<SwapTargetUi?>(null) }
@@ -225,13 +233,16 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     title = { Text("${st.name} (${st.fanValue}番) — 总概率 ${st.probabilityPercent}") },
                     text = {
                         Column {
-                            Text("弃一张 → 摸一张，可进入听牌态：", fontSize = 13.sp, color = Color.Gray)
+                            val sc = st.swapPaths.firstOrNull()?.swapCount ?: 1
+                            Text("弃${sc}张 → 摸${sc}张的替换路径：", fontSize = 13.sp, color = Color.Gray)
                             Spacer(Modifier.height(4.dp))
                             st.swapPaths.forEach { sp ->
                                 val waitStr = if (sp.resultingWaits.isNotEmpty())
                                     " → 听 ${sp.resultingWaits.joinToString("") { it.toString() }}" else ""
+                                val discStr = sp.discardTiles.joinToString("") { it.toString() }
+                                val drawStr = sp.drawTiles.joinToString("") { it.toString() }
                                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("弃 ${sp.discardTile}→摸 ${sp.drawTile}  剩${sp.remainingCount}张", fontSize = 13.sp)
+                                    Text("弃 $discStr→摸 $drawStr  剩${sp.remainingCount}张", fontSize = if (sp.swapCount > 1) 11.sp else 13.sp)
                                     Text("${sp.probabilityPercent}$waitStr", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
                                 }
                             }
@@ -468,6 +479,62 @@ fun DiscardRow(discards: List<TileType>, onRemove: (Int) -> Unit, onClear: () ->
         TextButton(onClick = onClear) { Text("清空牌河") }
     }
     Text("点牌可移除，切换上方模式后点网格加入", fontSize = 11.sp, color = Color.Gray)
+}
+
+// ── 分析规则页 ──
+
+@Composable
+fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
+    var depth by remember { mutableIntStateOf(AnalysisSettings.swapDepth) }
+
+    Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
+        Text("分析规则", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp))
+        Text("调整替换式分析的模拟深度（弃N摸N）", fontSize = 13.sp, color = Color.Gray)
+
+        Spacer(Modifier.height(16.dp))
+
+        Text("替换深度：弃${depth}张 → 摸${depth}张", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(8.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("1", fontSize = 14.sp)
+            Slider(
+                value = depth.toFloat(),
+                onValueChange = { depth = it.toInt() },
+                valueRange = 1f..3f,
+                steps = 1,
+                modifier = Modifier.weight(1f)
+            )
+            Text("3", fontSize = 14.sp)
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        val warning = when (depth) {
+            1 -> "仅替换1张牌，适合1向听分析"
+            2 -> "替换2张牌，计算量增大，可能较慢"
+            3 -> "替换3张牌，计算量极大，不推荐常规使用"
+            else -> ""
+        }
+        Text(warning, fontSize = 12.sp, color = if (depth >= 2) Color(0xFFFF9800) else Color.Gray)
+
+        Spacer(Modifier.height(12.dp))
+
+        Button(onClick = {
+            AnalysisSettings.setSwapDepth(depth)
+        }) {
+            Text("保存设置")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Text("说明", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text("- 深度=1：枚举每张暗手弃牌 × 34种摸牌（~300组合）", fontSize = 13.sp)
+        Text("- 深度=2：弃2张的组合 × 摸2张的组合（数千组合）", fontSize = 13.sp)
+        Text("- 深度=3：弃3张 × 摸3张（百万组合，按200条结果截断）", fontSize = 13.sp)
+        Text("- 深度越大，分析越慢但覆盖更多可能性", fontSize = 13.sp)
+        Text("- 设置自动持久化，重启有效", fontSize = 13.sp)
+    }
 }
 
 enum class PickerMode { HAND, DISCARD, MELD }

@@ -14,56 +14,46 @@ import com.mahjong.guobiao.model.TileType
 object DevelopmentAnalyzer {
 
     data class ImprovementPath(
-        val drawTile: TileType,
-        val remainingCount: Int,
-        val probability: Double,
-        val resultingWaits: List<TileType>,
+        val drawTile: TileType, val remainingCount: Int,
+        val probability: Double, val resultingWaits: List<TileType>,
         val improvementType: ImprovementType
     )
     enum class ImprovementType { TO_TENPAI, TO_WIN }
 
     data class FanTarget(
-        val fanRule: FanRule,
-        val totalProbability: Double,
+        val fanRule: FanRule, val totalProbability: Double,
         val improvementTiles: List<ImprovementTile>
     )
     data class ImprovementTile(
-        val tile: TileType,
-        val remainingCount: Int,
-        val probability: Double,
-        val resultingWaits: List<TileType>
+        val tile: TileType, val remainingCount: Int,
+        val probability: Double, val resultingWaits: List<TileType>
     )
 
-    /** 替换式发展路径（弃X摸Y）。 */
+    /** 替换式发展路径。弃N摸N时 discardTiles/drawTiles 含多个元素。 */
     data class SwapPath(
-        val discardTile: TileType,
-        val drawTile: TileType,
+        val discardTiles: List<TileType>,
+        val drawTiles: List<TileType>,
         val remainingCount: Int,
         val probability: Double,
-        val resultingWaits: List<TileType>
+        val resultingWaits: List<TileType>,
+        val swapCount: Int = 1
     )
 
-    /** 按番种聚合的替换式目标。 */
     data class SwapTarget(
-        val fanRule: FanRule,
-        val totalProbability: Double,
+        val fanRule: FanRule, val totalProbability: Double,
         val swapPaths: List<SwapPath>
     )
 
     data class DevelopmentResult(
-        val currentShanten: Int,
-        val totalRemaining: Int,
-        val improvements: List<ImprovementPath>,
-        val fanTargets: List<FanTarget>,
-        val swapTargets: List<SwapTarget>,     // 替换式分析结果
-        val isTenpaiNoFan: Boolean = false      // 听牌但无有效番种
+        val currentShanten: Int, val totalRemaining: Int,
+        val improvements: List<ImprovementPath>, val fanTargets: List<FanTarget>,
+        val swapTargets: List<SwapTarget>, val isTenpaiNoFan: Boolean = false,
+        val maxDepthUsed: Int = 1
     )
 
-    /** 听牌态是否有任意等待牌可达成 8 番起和。 */
     fun hasValidTenpai(hand: Hand): Boolean {
         if (!hand.isValidTenpaiSize()) return false
-        val waits = TenpaiCalculator.waitingTiles(hand)
-        return waits.any { wait ->
+        return TenpaiCalculator.waitingTiles(hand).any { wait ->
             val winHand = hand.withConcealed((hand.concealed + wait).sorted())
             WinChecker.getAllDecompositions(winHand).any { decomp ->
                 FanScorer.score(FanContext(decomp, winHand, WinInfo(wait))).meetsMinimum
@@ -71,130 +61,174 @@ object DevelopmentAnalyzer {
         }
     }
 
-    /** 主入口：听牌/和非听牌，返回统一结果。 */
     fun analyze(hand: Hand, tableState: TableState): DevelopmentResult {
         val totalTiles = 136
         val tenpaiSize = hand.concealedCountForTenpai()
         val winSize = hand.concealedCountForWin()
         val size = hand.concealed.size
 
-        // 已和牌
-        if (size == winSize && WinChecker.isWin(hand)) {
+        if (size == winSize && WinChecker.isWin(hand))
             return DevelopmentResult(-1, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), emptyList())
-        }
 
-        // 听牌态：检查是否有有效番种
         if (size == tenpaiSize && hand.isValidTenpaiSize()) {
             val waits = TenpaiCalculator.waitingTiles(hand)
             val hasValid = waits.isNotEmpty() && hasValidTenpai(hand)
             if (hasValid) {
-                // 听牌且有有效番种 → 正常听牌路径
-                val imps = waits.map { wait ->
-                    val rem = 4 - visibleCount(wait, hand, tableState)
-                    ImprovementPath(wait, rem, rem.toDouble() / remainingTotal(hand, tableState, totalTiles), emptyList(), ImprovementType.TO_WIN)
+                val imps = waits.map { w ->
+                    val r = 4 - visibleCount(w, hand, tableState)
+                    ImprovementPath(w, r, r.toDouble() / remainingTotal(hand, tableState, totalTiles), emptyList(), ImprovementType.TO_WIN)
                 }
-                val fans = groupByFans(hand, imps, false)
-                return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), fans, emptyList())
+                return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), groupByFans(hand, imps), emptyList())
             } else if (waits.isNotEmpty()) {
-                // 听牌但无效 → swap 分析
-                val swaps = analyzeSwap(hand, tableState, totalTiles, tenpaiSize)
-                return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), swaps, true)
+                val (swaps, used) = analyzeSwap(hand, tableState, totalTiles, tenpaiSize)
+                return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), swaps, true, used)
             }
             return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), emptyList())
         }
 
-        // 非听牌：1向听先试 add-one
         val shanten = tenpaiSize - size
-        val totalRem = remainingTotal(hand, tableState, totalTiles)
-
-        // always run swap analysis for non-tenpai
-        val swaps = analyzeSwap(hand, tableState, totalTiles, tenpaiSize)
-        return DevelopmentResult(shanten, totalRem, emptyList(), emptyList(), swaps)
+        val (swaps, used) = analyzeSwap(hand, tableState, totalTiles, tenpaiSize)
+        return DevelopmentResult(shanten, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), swaps, maxDepthUsed = used)
     }
 
-    /** 替换式分析：暗手每张牌尝试弃→摸。 */
-    private fun analyzeSwap(hand: Hand, tableState: TableState, totalTiles: Int, targetSize: Int): List<SwapTarget> {
+    /** 替换式分析：根据 AnalysisSettings.swapDepth 控制深度。 */
+    private fun analyzeSwap(hand: Hand, tableState: TableState, totalTiles: Int, targetSize: Int): Pair<List<SwapTarget>, Int> {
+        val depth = AnalysisSettings.swapDepth.coerceIn(1, 3)
         val totalRem = remainingTotal(hand, tableState, totalTiles)
-        val swapPaths = mutableListOf<SwapPath>()
+        val paths = mutableListOf<SwapPath>()
+        val discCandidates = hand.concealed.distinct()
 
-        // 去重：暗手中每张牌只试一次
-        val discardCandidates = hand.concealed.distinct()
+        if (depth == 1) {
+            swapDepth1(hand, tableState, discCandidates, totalRem, targetSize, paths)
+        } else {
+            swapDepthN(hand, tableState, discCandidates, totalRem, targetSize, depth, paths)
+        }
 
-        for (discard in discardCandidates) {
-            val afterDiscard = hand.concealed.toMutableList()
-            afterDiscard.remove(discard)
+        paths.sortByDescending { it.probability }
+        return groupSwapsByFans(hand, paths) to depth
+    }
 
+    /** 单层替换（深度=1）。 */
+    private fun swapDepth1(
+        hand: Hand, tableState: TableState, discCandidates: List<TileType>,
+        totalRem: Int, targetSize: Int, results: MutableList<SwapPath>
+    ) {
+        for (discard in discCandidates) {
+            val afterDiscard = hand.concealed.toMutableList().apply { remove(discard) }
             for (draw in TileType.ALL_NON_FLOWER) {
-                if (draw == discard) continue // 换同样的牌无意义
+                if (draw == discard) continue
                 val remaining = 4 - visibleCount(draw, hand, tableState)
                 if (remaining <= 0) continue
+                val newConc = (afterDiscard + draw).sorted()
+                val newHand = hand.withConcealed(newConc)
 
-                val newConcealed = (afterDiscard + draw).sorted()
-                val newHand = hand.withConcealed(newConcealed)
-
-                if (newConcealed.size == targetSize && newHand.isValidTenpaiSize()) {
+                if (newConc.size == targetSize && newHand.isValidTenpaiSize()) {
                     val waits = TenpaiCalculator.waitingTiles(newHand)
-                    if (waits.isNotEmpty()) {
-                        swapPaths.add(SwapPath(discard, draw, remaining, remaining.toDouble() / totalRem, waits))
-                    }
-                } else if (newConcealed.size == targetSize + 1 && WinChecker.isWin(newHand)) {
-                    swapPaths.add(SwapPath(discard, draw, remaining, remaining.toDouble() / totalRem, emptyList()))
+                    if (waits.isNotEmpty())
+                        results.add(SwapPath(listOf(discard), listOf(draw), remaining, remaining.toDouble() / totalRem, waits, 1))
+                } else if (newConc.size == targetSize + 1 && WinChecker.isWin(newHand)) {
+                    results.add(SwapPath(listOf(discard), listOf(draw), remaining, remaining.toDouble() / totalRem, emptyList(), 1))
                 }
             }
         }
-
-        swapPaths.sortByDescending { it.probability }
-        return groupSwapsByFans(hand, swapPaths)
     }
 
-    /** 将 swap 路径按番种聚合。 */
+    /** 多层替换（深度=2,3）：组合枚举。 */
+    private fun swapDepthN(
+        hand: Hand, tableState: TableState, discCandidates: List<TileType>,
+        totalRem: Int, targetSize: Int, depth: Int, results: MutableList<SwapPath>
+    ) {
+        val allTiles = TileType.ALL_NON_FLOWER
+        val discCombos = combinations(discCandidates, depth)
+        val drawCombos = combinations(allTiles.toList(), depth)
+
+        // 限制搜索结果数量防止响应过慢
+        val maxResults = 200
+        for (discs in discCombos) {
+            val afterDiscard = hand.concealed.toMutableList()
+            for (d in discs) afterDiscard.remove(d)
+            for (draws in drawCombos) {
+                // 跳过的组合：摸牌全同弃牌 或 有重复摸牌
+                if (draws.toSet().size < depth) continue
+                if (draws.any { it in discs }) continue
+                // 检查每张摸牌剩余
+                var ok = true
+                var remMin = 999
+                for (draw in draws) {
+                    val remaining = 4 - visibleCount(draw, hand, tableState)
+                    if (remaining <= 0) { ok = false; break }
+                    if (remaining < remMin) remMin = remaining
+                }
+                if (!ok) continue
+
+                val newConc = (afterDiscard + draws).sorted()
+                val newHand = hand.withConcealed(newConc)
+                if (newConc.size == targetSize && newHand.isValidTenpaiSize()) {
+                    val waits = TenpaiCalculator.waitingTiles(newHand)
+                    if (waits.isNotEmpty()) {
+                        // 简化概率：取最小剩余 / totalRem
+                        results.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, waits, depth))
+                        if (results.size >= maxResults) return
+                    }
+                } else if (newConc.size == targetSize + 1 && WinChecker.isWin(newHand)) {
+                    results.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, emptyList(), depth))
+                    if (results.size >= maxResults) return
+                }
+            }
+        }
+    }
+
+    /** 生成 n 组合。 */
+    private fun <T> combinations(list: List<T>, n: Int): List<List<T>> {
+        if (n <= 0) return listOf(emptyList())
+        if (list.size < n) return emptyList()
+        val result = mutableListOf<List<T>>()
+        fun dfs(start: Int, current: MutableList<T>) {
+            if (current.size == n) { result.add(current.toList()); return }
+            for (i in start until list.size) {
+                current.add(list[i])
+                dfs(i + 1, current)
+                current.removeAt(current.lastIndex)
+            }
+        }
+        dfs(0, mutableListOf())
+        return result
+    }
+
     private fun groupSwapsByFans(hand: Hand, swaps: List<SwapPath>): List<SwapTarget> {
         val fanMap = mutableMapOf<String, MutableList<SwapPath>>()
-
         for (sw in swaps) {
             val afterDiscard = hand.concealed.toMutableList()
-            afterDiscard.remove(sw.discardTile)
-            val baseConcealed = (afterDiscard + sw.drawTile).sorted()
+            for (d in sw.discardTiles) afterDiscard.remove(d)
+            val baseConc = (afterDiscard + sw.drawTiles).sorted()
 
             if (sw.resultingWaits.isEmpty()) {
-                // 直接和牌
-                val winHand = hand.withConcealed(baseConcealed)
-                val decomps = WinChecker.getAllDecompositions(winHand)
-                for (decomp in decomps) {
-                    val result = FanScorer.score(FanContext(decomp, winHand, WinInfo(sw.drawTile)))
-                    if (result.meetsMinimum) {
-                        for (rule in result.allDetected) {
-                            fanMap.getOrPut(rule.id) { mutableListOf() }.add(sw)
-                        }
-                    }
+                val winHand = hand.withConcealed(baseConc)
+                for (decomp in WinChecker.getAllDecompositions(winHand)) {
+                    val result = FanScorer.score(FanContext(decomp, winHand, WinInfo(sw.drawTiles.last())))
+                    if (result.meetsMinimum)
+                        for (rule in result.allDetected) fanMap.getOrPut(rule.id) { mutableListOf() }.add(sw)
                 }
             } else {
                 for (wait in sw.resultingWaits) {
-                    val winHand = hand.withConcealed((baseConcealed + wait).sorted())
+                    val winHand = hand.withConcealed((baseConc + wait).sorted())
                     if (!winHand.isValidWinSize()) continue
-                    val decomps = WinChecker.getAllDecompositions(winHand)
-                    for (decomp in decomps) {
+                    for (decomp in WinChecker.getAllDecompositions(winHand)) {
                         val result = FanScorer.score(FanContext(decomp, winHand, WinInfo(wait)))
-                        if (result.meetsMinimum) {
-                            for (rule in result.allDetected) {
-                                fanMap.getOrPut(rule.id) { mutableListOf() }.add(sw)
-                            }
-                        }
+                        if (result.meetsMinimum)
+                            for (rule in result.allDetected) fanMap.getOrPut(rule.id) { mutableListOf() }.add(sw)
                     }
                 }
             }
         }
-
         return fanMap.entries.map { (id, paths) ->
-            val uniquePaths = paths.distinctBy { Pair(it.discardTile, it.drawTile) }
-            val totalProb = uniquePaths.sumOf { it.probability }
+            val unique = paths.distinctBy { Pair(it.discardTiles, it.drawTiles) }
             val rule = FanRegistry.byId(id) ?: return@map null
-            SwapTarget(rule, totalProb, uniquePaths.sortedByDescending { it.probability })
+            SwapTarget(rule, unique.sumOf { it.probability }, unique.sortedByDescending { it.probability })
         }.filterNotNull().sortedByDescending { it.totalProbability }
     }
 
-    /** add-one 模式的番种聚合。 */
-    private fun groupByFans(hand: Hand, improvements: List<ImprovementPath>, isAddMode: Boolean): List<FanTarget> {
+    private fun groupByFans(hand: Hand, improvements: List<ImprovementPath>): List<FanTarget> {
         val fanMap = mutableMapOf<String, MutableList<ImprovementTile>>()
         for (imp in improvements) {
             for (wait in imp.resultingWaits) {
@@ -210,9 +244,9 @@ object DevelopmentAnalyzer {
             }
         }
         return fanMap.entries.map { (ruleId, tiles) ->
-            val uniqueTiles = tiles.distinctBy { it.tile }
+            val unique = tiles.distinctBy { it.tile }
             val rule = FanRegistry.byId(ruleId) ?: return@map null
-            FanTarget(rule, uniqueTiles.sumOf { it.probability }, uniqueTiles.sortedByDescending { it.probability })
+            FanTarget(rule, unique.sumOf { it.probability }, unique.sortedByDescending { it.probability })
         }.filterNotNull().sortedByDescending { it.totalProbability }
     }
 
@@ -221,8 +255,7 @@ object DevelopmentAnalyzer {
         for (t in TileType.ALL_NON_FLOWER) {
             var v = hand.concealed.count { it == t } + hand.melds.flatMap { it.tiles }.count { it == t }
             for (p in tableState.players) {
-                if (p.seat == tableState.selfSeat) v += p.discards.count { it == t }
-                else v += p.visibleCount(t)
+                if (p.seat == tableState.selfSeat) v += p.discards.count { it == t } else v += p.visibleCount(t)
             }
             visible += minOf(v, 4)
         }
@@ -232,8 +265,7 @@ object DevelopmentAnalyzer {
     private fun visibleCount(tile: TileType, hand: Hand, tableState: TableState): Int {
         var v = hand.concealed.count { it == tile } + hand.melds.flatMap { it.tiles }.count { it == tile }
         for (p in tableState.players) {
-            if (p.seat == tableState.selfSeat) v += p.discards.count { it == tile }
-            else v += p.visibleCount(tile)
+            if (p.seat == tableState.selfSeat) v += p.discards.count { it == tile } else v += p.visibleCount(tile)
         }
         return v
     }
