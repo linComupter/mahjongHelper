@@ -32,7 +32,7 @@ v4/
 │       ├── engine/
 │       │   ├── win/                 # Win detection
 │       │   │   ├── StandardDecomposer.kt   # DFS: 14 tiles → 4 melds + 1 pair (all decomps)
-│       │   │   ├── SevenPairsChecker.kt     # 7 distinct pairs, no open melds
+│       │   │   ├── SevenPairsChecker.kt     # 7 distinct pairs + luxury (4-of-kind as 2 pairs)
 │       │   │   ├── ThirteenOrphansChecker.kt # 13 terminals/honors + 1 repeat
 │       │   │   ├── AllNonAdjacentChecker.kt  # DISABLED (needs rulebook verification)
 │       │   │   └── WinChecker.kt            # Entry: returns all valid decompositions
@@ -138,7 +138,9 @@ Each `FanRule` has:
 - **全不靠/七星不靠**: Disabled in `AllNonAdjacentChecker` — the precise definition needs official rulebook verification. Current loose implementation caused false positives in tenpai (e.g., 13 orphans + 2m was incorrectly deemed a win).
 - **81 番種 coverage**: ~40 implemented (88番: 大四喜/大三元/绿一色/九莲宝灯/四杠/十三幺; 64番: 四暗刻/连七对; 24番: 清一色/七对/小四喜/小三元; 12番: 三暗刻/三杠/大于五/小于五/三风刻/三色三同顺/三同刻; 8番: 碰碰和/混一色/混幺九/妙手回春/海底捞月/抢杠; 6番: 断幺/暗杠/明杠/箭刻/圈风刻/门风刻/双箭刻; 4番: 不求人/全求人/边张/嵌张/双暗刻; 2番: 无字; 1番: 自摸/花牌). Remaining types (组合龙/全不靠 subtypes/step-ascending sequences etc.) need official rulebook verification.
 - **Fan values**: Based on commonly-cited GuoBiao distributions. Some values may differ across rulebook editions.
+- **新增番种**: 豪华七对(8番)/双豪华七对(16番)/三豪华七对(24番)/红孔雀(16番)/蓝一色(16番)/大七星(24番)。WinChecker 新增 `checkLuxury` 支持 4 张同牌拆两对。
 - **副露 (Melds) input**: UI supports 碰/吃/明杠/暗杠/加杠 via mode chips in the picker area. Meld creation checks 4-copy limit. Current melds shown between hand and picker grid, click to remove.
+- **牌河**: 分行展示（每行最多9张），超过4行高度可上下滚动。
 - **ML tile recognition**: Phase 2 (not started).
 
 ## Design Decisions
