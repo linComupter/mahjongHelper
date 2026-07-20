@@ -472,9 +472,21 @@ fun WinMethodSelector(method: WinMethod, onSelect: (WinMethod) -> Unit) {
 
 @Composable
 fun DiscardRow(discards: List<TileType>, onRemove: (Int) -> Unit, onClear: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        LazyRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            items(discards) { tile -> TileView(tile, onClick = { onRemove(discards.indexOf(tile)) }) }
+    Row(verticalAlignment = Alignment.Top) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(max = 152.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            val rows = discards.chunked(9) // 每行最多9张牌
+            rows.forEachIndexed { rowIdx, rowTiles ->
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(vertical = 1.dp)) {
+                    rowTiles.forEach { tile ->
+                        TileView(tile, onClick = { onRemove(discards.indexOf(tile)) })
+                    }
+                }
+            }
         }
         TextButton(onClick = onClear) { Text("清空牌河") }
     }
