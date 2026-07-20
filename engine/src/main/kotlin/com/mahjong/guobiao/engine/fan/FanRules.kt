@@ -501,3 +501,85 @@ object FlowerTile : FanRule {
 }
 
 // endregion
+
+// region 豪华七对系列（8番/16番/24番）
+
+object LuxurySevenPairs : FanRule {
+    override val id = "luxury_seven_pairs"
+    override val name = "豪华七对"
+    override val value = 8
+    override val subsumes = setOf("seven_pairs")
+    override fun detect(ctx: FanContext): Boolean = ctx.hand.isClosed && countLuxuryGroups(ctx.hand) == 1
+}
+
+object DoubleLuxurySevenPairs : FanRule {
+    override val id = "double_luxury_seven_pairs"
+    override val name = "双豪华七对"
+    override val value = 16
+    override val subsumes = setOf("seven_pairs", "luxury_seven_pairs")
+    override fun detect(ctx: FanContext): Boolean = ctx.hand.isClosed && countLuxuryGroups(ctx.hand) == 2
+}
+
+object TripleLuxurySevenPairs : FanRule {
+    override val id = "triple_luxury_seven_pairs"
+    override val name = "三豪华七对"
+    override val value = 24
+    override val subsumes = setOf("seven_pairs", "luxury_seven_pairs", "double_luxury_seven_pairs")
+    override fun detect(ctx: FanContext): Boolean = ctx.hand.isClosed && countLuxuryGroups(ctx.hand) == 3
+}
+
+private fun countLuxuryGroups(hand: com.mahjong.guobiao.model.Hand): Int {
+    if (!hand.isValidWinSize()) return -1
+    val counts = hand.concealedCounts()
+    var four = 0; var two = 0
+    for (t in com.mahjong.guobiao.model.TileType.ALL_NON_FLOWER) {
+        when (counts[t]) { 2 -> two++; 4 -> four++; 0 -> {} else -> return -1 }
+    }
+    return if (4 * four + 2 * two == 14) four else -1
+}
+
+// endregion
+
+// region 特殊牌型（16番/24番）
+
+object RedPeacock : FanRule {
+    override val id = "red_peacock"
+    override val name = "红孔雀"
+    override val value = 16
+    override val subsumes = setOf("all_triplets", "half_flush", "dragon_triplet")
+    override fun detect(ctx: FanContext): Boolean {
+        val allowed = setOf(18, 22, 24, 26, 31) // 1s,5s,7s,9s,中
+        val counts = FanUtils.fullCounts(ctx)
+        for (i in 0 until 34) { if (counts[TileType(i)] > 0 && i !in allowed) return false }
+        return true
+    }
+}
+
+object AllBlue : FanRule {
+    override val id = "all_blue"
+    override val name = "蓝一色"
+    override val value = 16
+    override val subsumes = setOf("all_triplets", "half_flush")
+    override fun detect(ctx: FanContext): Boolean {
+        val allowed = setOf(27, 28, 29, 30, 33, 16) // 东南西北白8筒
+        val counts = FanUtils.fullCounts(ctx)
+        for (i in 0 until 34) { if (counts[TileType(i)] > 0 && i !in allowed) return false }
+        return true
+    }
+}
+
+object BigSevenStars : FanRule {
+    override val id = "big_seven_stars"
+    override val name = "大七星"
+    override val value = 24
+    override val subsumes = setOf("seven_pairs", "all_honors")
+    override fun detect(ctx: FanContext): Boolean {
+        if (!ctx.hand.isClosed) return false
+        val counts = ctx.hand.concealedCounts()
+        for (c in 27..33) { if (counts[TileType(c)] != 2) return false }
+        for (c in 0..26) { if (counts[TileType(c)] > 0) return false }
+        return true
+    }
+}
+
+// endregion

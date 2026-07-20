@@ -7,28 +7,45 @@ import com.mahjong.guobiao.model.Meld
 import com.mahjong.guobiao.model.TileType
 
 /**
- * 七对：7 对不同牌型，4 张同牌不能拆成两对。仅限暗手（无副露）。
+ * 七对：7 对不同牌型（不含4张拆两对）。
+ * 豪华七对（含4张同牌）由本类中的 checkLuxury 处理。
  */
 object SevenPairsChecker {
 
+    /** 标准七对：每种牌恰好2张，7种不同。 */
     fun check(hand: Hand): Decomposition? {
         if (!hand.isClosed) return null
         if (!hand.isValidWinSize()) return null
-
         val counts = hand.concealedCounts()
         val pairs = mutableListOf<TileType>()
         for (t in TileType.ALL_NON_FLOWER) {
             when (counts[t]) {
                 0 -> continue
                 2 -> pairs.add(t)
-                4 -> return null // 4 张同牌不能算两对
-                else -> return null // 奇数张不可能七对
+                else -> return null
             }
         }
         if (pairs.size != 7) return null
+        return Decomposition(DecompositionType.SEVEN_PAIRS, pairs.map { Meld.pair(it) }, null)
+    }
 
-        val pairMelds = pairs.map { Meld.pair(it) }
-        // 七对无单一雀头概念，7 对全放 melds，pair=null
-        return Decomposition(DecompositionType.SEVEN_PAIRS, pairMelds, null)
+    /** 豪华七对（含4张同牌拆为两对）：支持1~3组4张。 */
+    fun checkLuxury(hand: Hand): Decomposition? {
+        if (!hand.isClosed) return null
+        if (!hand.isValidWinSize()) return null
+        val counts = hand.concealedCounts()
+        val pairs = mutableListOf<TileType>()
+        var fourGroups = 0
+        for (t in TileType.ALL_NON_FLOWER) {
+            when (counts[t]) {
+                0 -> continue
+                2 -> pairs.add(t)
+                4 -> { pairs.add(t); pairs.add(t); fourGroups++ }
+                else -> return null
+            }
+        }
+        if (fourGroups !in 1..3) return null
+        if (pairs.size != 7) return null
+        return Decomposition(DecompositionType.SEVEN_PAIRS, pairs.map { Meld.pair(it) }, null)
     }
 }

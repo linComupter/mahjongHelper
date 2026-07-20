@@ -20,9 +20,8 @@ object WinChecker {
         val results = mutableListOf<Decomposition>()
         results += StandardDecomposer.decompose(hand)
         SevenPairsChecker.check(hand)?.let { results.add(it) }
+        SevenPairsChecker.checkLuxury(hand)?.let { results.add(it) }
         ThirteenOrphansChecker.check(hand)?.let { results.add(it) }
-        // 全不靠/全靠/组合龙暂时移除
-        // AllNonAdjacentChecker.check(hand)?.let { results.add(it) }
         return results.distinct()
     }
 }

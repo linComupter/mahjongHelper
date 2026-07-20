@@ -110,7 +110,7 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
     val state by vm.state.collectAsState()
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp)) {
 
-        Text("国标麻将助手", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp))
+        Text("雀门助手", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp))
 
         // 手牌区
         Row(verticalAlignment = Alignment.CenterVertically) {

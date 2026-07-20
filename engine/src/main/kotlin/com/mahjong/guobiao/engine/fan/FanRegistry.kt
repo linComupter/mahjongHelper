@@ -55,7 +55,15 @@ object FanRegistry {
         NoHonors,
         // 1番
         SelfDraw,
-        FlowerTile
+        FlowerTile,
+        // 豪华七对系列
+        LuxurySevenPairs,
+        DoubleLuxurySevenPairs,
+        TripleLuxurySevenPairs,
+        // 特殊牌型
+        RedPeacock,
+        AllBlue,
+        BigSevenStars
     )
 
     private val byId: Map<String, FanRule> = rules.associateBy { it.id }

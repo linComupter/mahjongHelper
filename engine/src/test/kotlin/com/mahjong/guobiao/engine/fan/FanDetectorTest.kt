@@ -166,4 +166,49 @@ class FanDetectorTest {
         assertTrue(hasFan(result, "大四喜"))
         assertTrue(isSubsumed(result, "碰碰和"), "碰碰和应被大四喜不计")
     }
+
+    // ── 新增番种 ──
+
+    @Test
+    fun `豪华七对`() {
+        val hand = TileParser.parseHand("1111m22m33m44m55m66m")
+        val decomps = WinChecker.getAllDecompositions(hand)
+        assertTrue(decomps.isNotEmpty(), "手牌应能和牌")
+        // 检查所有分解，至少有一个检测到豪华七对
+        val hasLuxury = decomps.any { decomp ->
+            val result = FanScorer.score(FanContext(decomp, hand, WinInfo(hand.concealed.last())))
+            result.allDetected.any { it.name == "豪华七对" } && result.subsumed.any { it.name == "七对" }
+        }
+        assertTrue(hasLuxury, "应检测到豪华七对且七对被不计")
+    }
+
+    @Test
+    fun `双豪华七对`() {
+        // 4×1m + 4×2m + 33m44m55m = 14张
+        val result = scoreHand("1111m2222m33m44m55m")
+        assertTrue(hasFan(result, "双豪华七对"), "应检测到双豪华七对")
+    }
+
+    @Test
+    fun `大七星`() {
+        // 东东 南南 西西 北北 中中 发发 白白
+        val result = scoreHand("东东南南西西北北中中发发白白")
+        assertTrue(hasFan(result, "大七星"), "应检测到大七星")
+        assertTrue(isSubsumed(result, "七对"), "七对应被大七星不计")
+    }
+
+    @Test
+    fun `红孔雀`() {
+        // 1s1s1s 5s5s5s 7s7s7s 9s9s9s 中中
+        val result = scoreHand("111s555s777s999s中中")
+        assertTrue(hasFan(result, "红孔雀"), "应检测到红孔雀")
+    }
+
+    @Test
+    fun `蓝一色`() {
+        // 东东东 南南南 西西北北 白白 不成立... 用刻子+将
+        // 东东东 南南南 白白白 8筒8筒8筒 西西
+        val result = scoreHand("东东东南南南白白白8p8p8p西西")
+        assertTrue(hasFan(result, "蓝一色"), "应检测到蓝一色")
+    }
 }
