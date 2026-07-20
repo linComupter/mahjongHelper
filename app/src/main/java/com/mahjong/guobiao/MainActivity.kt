@@ -457,9 +457,19 @@ fun TileView(tile: TileType, remaining: Int = -1, onClick: () -> Unit) {
         modifier = Modifier.size(36.dp).background(bg, RoundedCornerShape(4.dp)).border(1.dp, Color.Gray, RoundedCornerShape(4.dp)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(tile.toString(), fontSize = if (remaining >= 0) 11.sp else 13.sp, textAlign = TextAlign.Center, color = if (remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray)
-            if (remaining >= 0) Text("($remaining)", fontSize = 9.sp, color = Color.Gray)
+        Text(tile.toString(), fontSize = 13.sp, textAlign = TextAlign.Center, color = if (remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray)
+        // 右上角剩余张数角标
+        if (remaining >= 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(1.dp)
+                    .background(Color(0xDDEF5350), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 3.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("$remaining", fontSize = 8.sp, color = Color.White, textAlign = TextAlign.Center)
+            }
         }
     }
 }
