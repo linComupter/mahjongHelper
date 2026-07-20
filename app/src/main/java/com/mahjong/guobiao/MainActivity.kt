@@ -161,16 +161,19 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_CLOSED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_CLOSED }, label = { Text("暗杠") })
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_ADDED }, label = { Text("加杠") })
         }
-        TilePickerGrid(onPick = { tile ->
-            when {
-                pickerMode == PickerMode.MELD && meldKind != null -> {
-                    vm.addMeld(meldKind!!, tile)
-                    meldKind = null; pickerMode = PickerMode.HAND
+        TilePickerGrid(
+            onPick = { tile ->
+                when {
+                    pickerMode == PickerMode.MELD && meldKind != null -> {
+                        vm.addMeld(meldKind!!, tile)
+                        meldKind = null; pickerMode = PickerMode.HAND
+                    }
+                    pickerMode == PickerMode.HAND -> vm.addTile(tile)
+                    pickerMode == PickerMode.DISCARD -> vm.addDiscard(tile)
                 }
-                pickerMode == PickerMode.HAND -> vm.addTile(tile)
-                pickerMode == PickerMode.DISCARD -> vm.addDiscard(tile)
-            }
-        })
+            },
+            remaining = { tile -> 4 - state.concealed.count { it == tile } - state.melds.flatMap { m -> m.tiles }.count { it == tile } - state.discards.count { it == tile } }
+        )
 
         Spacer(Modifier.height(8.dp))
 
@@ -431,20 +434,21 @@ fun HandRow(tiles: List<TileType>, onRemove: (Int) -> Unit) {
 }
 
 @Composable
-fun TilePickerGrid(onPick: (TileType) -> Unit) {
+fun TilePickerGrid(onPick: (TileType) -> Unit, remaining: (TileType) -> Int = { 0 }) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(9),
         modifier = Modifier.heightIn(max = 260.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        items(TileType.ALL_NON_FLOWER) { tile -> TileView(tile, onClick = { onPick(tile) }) }
+        items(TileType.ALL_NON_FLOWER) { tile -> TileView(tile, remaining = remaining(tile), onClick = { onPick(tile) }) }
     }
 }
 
 @Composable
-fun TileView(tile: TileType, onClick: () -> Unit) {
+fun TileView(tile: TileType, remaining: Int = -1, onClick: () -> Unit) {
     val bg = when {
+        remaining == 0 -> Color(0xFFE0E0E0)
         tile.isHonor -> Color(0xFFE8DCC8)
         tile.isTerminal -> Color(0xFFDCE8DC)
         else -> Color(0xFFF5F5F5)
@@ -453,7 +457,10 @@ fun TileView(tile: TileType, onClick: () -> Unit) {
         modifier = Modifier.size(36.dp).background(bg, RoundedCornerShape(4.dp)).border(1.dp, Color.Gray, RoundedCornerShape(4.dp)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Text(tile.toString(), fontSize = 13.sp, textAlign = TextAlign.Center, color = if (tile.isHonor) Color.Black else Color.DarkGray)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(tile.toString(), fontSize = if (remaining >= 0) 11.sp else 13.sp, textAlign = TextAlign.Center, color = if (remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray)
+            if (remaining >= 0) Text("($remaining)", fontSize = 9.sp, color = Color.Gray)
+        }
     }
 }
 
@@ -472,15 +479,19 @@ fun WinMethodSelector(method: WinMethod, onSelect: (WinMethod) -> Unit) {
 
 @Composable
 fun DiscardRow(discards: List<TileType>, onRemove: (Int) -> Unit, onClear: () -> Unit) {
+    val scrollState = rememberScrollState()
+    LaunchedEffect(discards.size) {
+        if (discards.isNotEmpty()) scrollState.animateScrollTo(scrollState.maxValue)
+    }
     Row(verticalAlignment = Alignment.Top) {
         Column(
             modifier = Modifier
                 .weight(1f)
                 .heightIn(max = 152.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
         ) {
-            val rows = discards.chunked(9) // 每行最多9张牌
-            rows.forEachIndexed { rowIdx, rowTiles ->
+            val rows = discards.chunked(9)
+            rows.forEach { rowTiles ->
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(vertical = 1.dp)) {
                     rowTiles.forEach { tile ->
                         TileView(tile, onClick = { onRemove(discards.indexOf(tile)) })
