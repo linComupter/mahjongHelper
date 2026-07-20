@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 白色矩形牌面 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,26 L74,26 Q80,26 80,32 L80,76 Q80,82 74,82 L34,82 Q28,82 28,76 L28,32 Q28,26 34,26 Z" />
+
+    <!-- 红色边框 -->
+    <path
+        android:pathData="M34,26 L74,26 Q80,26 80,32 L80,76 Q80,82 74,82 L34,82 Q28,82 28,76 L28,32 Q28,26 34,26 Z"
+        android:strokeColor="#CC0000"
+        android:strokeWidth="3"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- 中心红色圆形（代表中/發） -->
+    <path
+        android:fillColor="#CC0000"
+        android:pathData="M54,44 A10,10 0 1,1 54.01,44 Z" />
+
+    <!-- "发" 字用简化的笔划表示 -->
+    <path
+        android:fillColor="#333333"
+        android:strokeColor="#333333"
+        android:strokeWidth="0.5"
+        android:pathData="
+            M47,66 L61,66
+            M49,72 L59,72
+            M54,60 L54,74
+            M45,56 L63,56" />
+</vector>
