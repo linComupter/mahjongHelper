@@ -68,9 +68,9 @@ class FanDetectorTest {
     }
 
     @Test
-    fun `九连宝灯`() {
+    fun `九莲宝灯`() {
         val result = scoreHand("1112345678999m5m")
-        assertTrue(hasFan(result, "九连宝灯"))
+        assertTrue(hasFan(result, "九莲宝灯"))
         assertTrue(isSubsumed(result, "清一色"))
     }
 

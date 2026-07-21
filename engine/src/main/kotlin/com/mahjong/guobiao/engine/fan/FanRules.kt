@@ -162,7 +162,7 @@ object PureTerminals : FanRule {
 // region 24番
 
 object NineGates : FanRule {
-    override val id = "nine_gates"; override val name = "九连宝灯"; override val value = 24
+    override val id = "nine_gates"; override val name = "九莲宝灯"; override val value = 24
     override val subsumes = setOf("full_flush")
     override fun detect(ctx: FanContext): Boolean {
         if (!ctx.hand.isClosed) return false
