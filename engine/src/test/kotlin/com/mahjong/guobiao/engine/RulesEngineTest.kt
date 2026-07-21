@@ -19,10 +19,10 @@ class RulesEngineTest {
 
     @Test
     fun `和牌态罗列番种`() {
-        // 九莲宝灯
+        // 九连宝灯
         val hand = TileParser.parseHand("1112345678999m5m")
         val fans = engine.listPossibleFans(hand)
-        assertTrue(fans.any { it.name == "九莲宝灯" })
+        assertTrue(fans.any { it.name == "九连宝灯" })
         assertTrue(fans.any { it.name == "清一色" })
     }
 
@@ -31,8 +31,8 @@ class RulesEngineTest {
         // 1112345678999m 听牌，听1-9m
         val hand = TileParser.parseHand("1112345678999m")
         val fans = engine.listPossibleFans(hand)
-        // 摸5m可达九莲宝灯
-        assertTrue(fans.any { it.name == "九莲宝灯" }, "听牌态应列出可达番种，实际: ${fans.map { it.name }}")
+        // 摸5m可达九连宝灯
+        assertTrue(fans.any { it.name == "九连宝灯" }, "听牌态应列出可达番种，实际: ${fans.map { it.name }}")
     }
 
     @Test
@@ -43,7 +43,7 @@ class RulesEngineTest {
     }
 
     @Test
-    fun `九莲宝灯听9张`() {
+    fun `九连宝灯听9张`() {
         val hand = TileParser.parseHand("1112345678999m")
         val waits = engine.waitingTiles(hand)
         assertEquals(9, waits.size)
@@ -86,11 +86,11 @@ class RulesEngineTest {
         assertEquals(9, result.waitingTiles.size)
         // 每张听牌应有剩余张数
         result.waitingTiles.forEach { assertTrue(it.remainingCount >= 0) }
-        // 摸5m可达九莲宝灯，应出现在某听牌的 possibleFans
+        // 摸5m可达九连宝灯，应出现在某听牌的 possibleFans
         val nineGatesWaits = result.waitingTiles.filter { wt ->
-            wt.possibleFans.any { it.name == "九莲宝灯" }
+            wt.possibleFans.any { it.name == "九连宝灯" }
         }
-        assertTrue(nineGatesWaits.isNotEmpty(), "应有听牌可达九莲宝灯")
+        assertTrue(nineGatesWaits.isNotEmpty(), "应有听牌可达九连宝灯")
     }
 
     @Test
@@ -100,9 +100,9 @@ class RulesEngineTest {
         val result = engine.fullAnalysis(hand, table)
         assertTrue(result.isWin)
         assertTrue(result.fanResults.isNotEmpty())
-        // 最高番应含九莲宝灯
+        // 最高番应含九连宝灯
         val best = result.fanResults.maxByOrNull { it.second.totalFan }!!
-        assertTrue(best.second.allDetected.any { it.name == "九莲宝灯" })
+        assertTrue(best.second.allDetected.any { it.name == "九连宝灯" })
     }
 
     @Test
