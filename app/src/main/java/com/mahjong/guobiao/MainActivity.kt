@@ -31,7 +31,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.ExperimentalUnitApi
+import kotlin.math.roundToInt
 import com.mahjong.guobiao.engine.AnalysisSettings
 import com.mahjong.guobiao.engine.DevelopmentAnalyzer
 import com.mahjong.guobiao.engine.fan.FanRegistry
@@ -533,9 +533,9 @@ fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
             Text("1", fontSize = 14.sp)
             Slider(
                 value = depth.toFloat(),
-                onValueChange = { depth = it.toInt() },
+                onValueChange = { depth = it.roundToInt() },
                 valueRange = 1f..AnalysisSettings.MAX_DEPTH.toFloat(),
-                steps = 1,
+                steps = AnalysisSettings.MAX_DEPTH - 1,
                 modifier = Modifier.weight(1f)
             )
             Text("${AnalysisSettings.MAX_DEPTH}", fontSize = 14.sp)
