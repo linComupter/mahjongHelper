@@ -28,53 +28,58 @@ object FanReverseAnalyzer {
     )
 
     /**
-     * 主入口：按番种倒推分析手牌发展方向。
+     * 主入口：按番种倒推 + 渐进深度 + 快速向听预检。
      */
     fun analyze(hand: Hand, tableState: TableState): List<SwapTarget> {
-        val depth = AnalysisSettings.swapDepth.coerceIn(1, 3)
-        val totalTiles = 136
-        val totalRem = remainingTotal(hand, tableState, totalTiles)
+        val maxDepth = AnalysisSettings.swapDepth.coerceIn(1, 3)
+        val totalRem = remainingTotal(hand, tableState, 136)
+        val tenpaiSize = hand.concealedCountForTenpai()
+        val winSize = hand.concealedCountForWin()
         val allTargets = mutableListOf<SwapTarget>()
 
         for (rule in FanRegistry.rules) {
             val rev = reverse(rule, hand) ?: continue
-            if (rev.nonCompliant.isEmpty()) continue  // 已满足
+            val ncCount = rev.nonCompliant.size
+            if (ncCount == 0) continue
 
-            // 不合规牌数 > 深度 → 跳过
-            if (rev.nonCompliant.size > depth) continue
-
-            // 生成替换组合
-            val discCombos = combinations(rev.nonCompliant, depth)
-            val drawCombos = combinations(rev.targetPool.toList(), depth)
+            // 渐进深度：从 min(1, ncCount) 逐层尝试到 min(maxDepth, ncCount)
             val paths = mutableListOf<SwapPath>()
+            val found = mutableSetOf<Pair<List<TileType>, List<TileType>>>()
 
-            for (discs in discCombos) {
-                val afterDiscard = hand.concealed.toMutableList()
-                for (d in discs) afterDiscard.remove(d)
-                for (draws in drawCombos) {
-                    if (draws.toSet().size < depth) continue
-                    if (draws.any { d -> d in discs }) continue
-                    var ok = true; var remMin = 999
-                    for (draw in draws) {
-                        val rem = 4 - visibleCount(draw, hand, tableState)
-                        if (rem <= 0) { ok = false; break }
-                        if (rem < remMin) remMin = rem
-                    }
-                    if (!ok) continue
-                    val newConc = (afterDiscard + draws).sorted()
-                    val newHand = hand.withConcealed(newConc)
-                    val tenpaiSize = hand.concealedCountForTenpai()
-                    if (newConc.size == tenpaiSize && newHand.isValidTenpaiSize()) {
-                        val waits = TenpaiCalculator.waitingTiles(newHand)
-                        if (waits.isNotEmpty()) {
-                            // 验证替换后的手牌经番种检测能到达目标番种
-                            if (reachesTarget(rule, hand, discs, draws, waits)) {
-                                paths.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, waits, depth))
-                            }
+            for (d in 1..maxDepth.coerceAtMost(ncCount)) {
+                if (paths.isNotEmpty() && d > 1) break // 浅层已找到路径，不需加深
+                val discCombos = combinations(rev.nonCompliant, d)
+                val drawCombos = combinations(rev.targetPool.toList(), d)
+                for (discs in discCombos) {
+                    val afterDiscard = hand.concealed.toMutableList()
+                    for (dd in discs) afterDiscard.remove(dd)
+                    for (draws in drawCombos) {
+                        if (draws.toSet().size < d) continue
+                        if (draws.any { it in discs }) continue
+                        val key = Pair(discs, draws)
+                        if (key in found) continue
+                        var ok = true; var remMin = 999
+                        for (draw in draws) {
+                            val rem = 4 - visibleCount(draw, hand, tableState)
+                            if (rem <= 0) { ok = false; break }
+                            if (rem < remMin) remMin = rem
                         }
-                    } else if (newConc.size == tenpaiSize + 1 && WinChecker.isWin(newHand)) {
-                        if (reachesTarget(rule, hand, discs, draws, emptyList())) {
-                            paths.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, emptyList(), depth))
+                        if (!ok) continue
+                        val newConc = (afterDiscard + draws).sorted()
+                        val newHand = hand.withConcealed(newConc)
+                        if (newConc.size == tenpaiSize && newHand.isValidTenpaiSize()) {
+                            // 快速预检：贪婪面子计数，淘汰明显不能听牌的
+                            if (!preCheckTenpai(newHand)) continue
+                            val waits = TenpaiCalculator.waitingTiles(newHand)
+                            if (waits.isNotEmpty() && reachesTarget(rule, hand, discs, draws, waits)) {
+                                found.add(key)
+                                paths.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, waits, d))
+                            }
+                        } else if (newConc.size == winSize && WinChecker.isWin(newHand)) {
+                            if (reachesTarget(rule, hand, discs, draws, emptyList())) {
+                                found.add(key)
+                                paths.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, emptyList(), d))
+                            }
                         }
                     }
                 }
@@ -85,6 +90,42 @@ object FanReverseAnalyzer {
             }
         }
         return allTargets.sortedByDescending { it.totalProbability }
+    }
+
+    /** 快速预检：贪婪形成 melds，淘汰明显无法听牌的手牌。 */
+    private fun preCheckTenpai(hand: Hand): Boolean {
+        val meldsToFind = 4 - hand.meldCount
+        val counts = hand.concealedCounts().copy()
+        // 方案1: 先刻子后顺子
+        var found = countGreedyMelds(counts, tripletsFirst = true)
+        if (found >= meldsToFind) return true
+        // 方案2: 先顺子后刻子
+        val counts2 = hand.concealedCounts().copy()
+        found = countGreedyMelds(counts2, tripletsFirst = false)
+        return found >= meldsToFind
+    }
+
+    private fun countGreedyMelds(counts: com.mahjong.guobiao.model.TileCounts, tripletsFirst: Boolean): Int {
+        var found = 0
+        if (tripletsFirst) {
+            for (t in TileType.ALL_NON_FLOWER) {
+                while (counts[t] >= 3) { counts.remove(t, 3); found++ }
+            }
+        }
+        for (rank in 0..6) {
+            for (base in listOf(0, 9, 18)) {
+                val a = TileType(base + rank); val b = TileType(base + rank + 1); val c = TileType(base + rank + 2)
+                while (counts[a] > 0 && counts[b] > 0 && counts[c] > 0) {
+                    counts.remove(a); counts.remove(b); counts.remove(c); found++
+                }
+            }
+        }
+        if (!tripletsFirst) {
+            for (t in TileType.ALL_NON_FLOWER) {
+                while (counts[t] >= 3) { counts.remove(t, 3); found++ }
+            }
+        }
+        return found
     }
 
     /** 验证替换后的手牌能到达目标番种。 */
