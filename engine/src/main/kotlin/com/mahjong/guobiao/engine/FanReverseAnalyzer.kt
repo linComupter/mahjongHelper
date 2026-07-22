@@ -31,7 +31,7 @@ object FanReverseAnalyzer {
      * 主入口：按番种倒推 + 渐进深度 + 快速向听预检。
      */
     fun analyze(hand: Hand, tableState: TableState): List<SwapTarget> {
-        val maxDepth = AnalysisSettings.swapDepth.coerceIn(1, 3)
+        val maxDepth = AnalysisSettings.swapDepth.coerceIn(1, AnalysisSettings.MAX_DEPTH)
         val totalRem = remainingTotal(hand, tableState, 136)
         val tenpaiSize = hand.concealedCountForTenpai()
         val winSize = hand.concealedCountForWin()

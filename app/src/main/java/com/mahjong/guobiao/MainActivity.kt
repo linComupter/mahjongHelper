@@ -534,20 +534,19 @@ fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
             Slider(
                 value = depth.toFloat(),
                 onValueChange = { depth = it.toInt() },
-                valueRange = 1f..3f,
+                valueRange = 1f..AnalysisSettings.MAX_DEPTH.toFloat(),
                 steps = 1,
                 modifier = Modifier.weight(1f)
             )
-            Text("3", fontSize = 14.sp)
+            Text("${AnalysisSettings.MAX_DEPTH}", fontSize = 14.sp)
         }
 
         Spacer(Modifier.height(8.dp))
 
-        val warning = when (depth) {
-            1 -> "仅替换1张牌，适合1向听分析"
-            2 -> "替换2张牌，计算量增大，可能较慢"
-            3 -> "替换3张牌，计算量极大，不推荐常规使用"
-            else -> ""
+        val warning = when {
+            depth <= 1 -> "仅替换1张牌，适合1向听分析"
+            depth == 2 -> "替换2张牌，计算量增大，可能较慢"
+            else -> "替换${depth}张牌，计算量指数增长，建议谨慎使用"
         }
         Text(warning, fontSize = 12.sp, color = if (depth >= 2) Color(0xFFFF9800) else Color.Gray)
 

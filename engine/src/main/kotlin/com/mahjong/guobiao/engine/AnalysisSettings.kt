@@ -8,12 +8,15 @@ package com.mahjong.guobiao.engine
  */
 object AnalysisSettings {
 
-    /** 替换深度：弃N摸N，默认1，范围1~3。 */
+    /** 最大可设定的替换深度。 */
+    const val MAX_DEPTH = 5
+
+    /** 替换深度：弃N摸N，默认1，范围1..MAX_DEPTH。 */
     var swapDepth: Int = 1
         private set
 
     fun setSwapDepth(depth: Int) {
-        swapDepth = depth.coerceIn(1, 3)
+        swapDepth = depth.coerceIn(1, MAX_DEPTH)
     }
 
     fun toProperties(): String = "swapDepth=$swapDepth"
@@ -22,7 +25,7 @@ object AnalysisSettings {
         text.lines().firstOrNull()?.let { line ->
             val parts = line.split("=", limit = 2)
             if (parts.size == 2 && parts[0].trim() == "swapDepth") {
-                swapDepth = (parts[1].trim().toIntOrNull() ?: 1).coerceIn(1, 3)
+                swapDepth = (parts[1].trim().toIntOrNull() ?: 1).coerceIn(1, MAX_DEPTH)
             }
         }
     }

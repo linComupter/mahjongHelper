@@ -93,7 +93,7 @@ object DevelopmentAnalyzer {
 
     /** 替换式分析：由 FanReverseAnalyzer 按番种倒推。 */
     private fun analyzeSwap(hand: Hand, tableState: TableState, totalTiles: Int, targetSize: Int): Pair<List<SwapTarget>, Int> {
-        val depth = AnalysisSettings.swapDepth.coerceIn(1, 3)
+        val depth = AnalysisSettings.swapDepth.coerceIn(1, AnalysisSettings.MAX_DEPTH)
         val targets = FanReverseAnalyzer.analyze(hand, tableState)
         val mapped = targets.map { t -> SwapTarget(t.fanRule, t.totalProbability,
             t.swapPaths.map { sp -> SwapPath(sp.discardTiles, sp.drawTiles, sp.remainingCount, sp.probability, sp.resultingWaits, sp.swapCount) }) }
