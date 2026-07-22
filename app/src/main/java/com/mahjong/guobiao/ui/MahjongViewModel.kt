@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mahjong.guobiao.engine.DevelopmentAnalyzer
 import com.mahjong.guobiao.engine.RulesEngine
+import com.mahjong.guobiao.engine.tenpai.TenpaiCalculator
 import com.mahjong.guobiao.engine.fan.FanSettingsStore
 import com.mahjong.guobiao.engine.fan.WinInfo
 import com.mahjong.guobiao.engine.fan.WinMethod
@@ -224,11 +225,15 @@ class MahjongViewModel : ViewModel() {
                     // 听牌但无有效番种 → swap 分析
                     val dev = DevelopmentAnalyzer.analyze(hand, tableState)
                     val swaps = mapSwapTargets(dev.swapTargets)
+                    val wtCount = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand).size
+                    val msg = if (swaps.isEmpty())
+                        "已听牌($wtCount 张)但无法起和，当前分析深度找不到发展方向，可尝试增加深度"
+                    else "已听牌但无法起和 — 弃牌换牌可发展至："
                     _state.value = s.copy(
                         isWin = false, isTenpai = false,
                         waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
                         fanTargets = emptyList(), swapTargets = swaps, isTenpaiNoFan = true,
-                        message = "已听牌但无法起和 — 弃${dev.maxDepthUsed}张换牌可发展至："
+                        message = msg
                     )
                 }
                 return@launch
@@ -238,12 +243,15 @@ class MahjongViewModel : ViewModel() {
             if (size in 1 until tenpaiSize) {
                 val dev = DevelopmentAnalyzer.analyze(hand, tableState)
                 val swaps = mapSwapTargets(dev.swapTargets)
+                val msg = if (swaps.isEmpty())
+                    "${dev.currentShanten}向听，当前分析深度下未找到可发展的牌型方向，可尝试增加深度"
+                else "${dev.currentShanten}向听 — ${dev.swapTargets.size}种牌型可发展（总剩余 ${dev.totalRemaining} 张）"
                 _state.value = s.copy(
                     isWin = false, isTenpai = false,
                     waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
                     fanTargets = emptyList(), swapTargets = swaps, isTenpaiNoFan = false,
                     totalRemaining = dev.totalRemaining,
-                    message = "${dev.currentShanten}向听 — 弃${dev.maxDepthUsed}换${dev.maxDepthUsed}，${dev.swapTargets.size}种牌型可发展（总剩余 ${dev.totalRemaining} 张）"
+                    message = msg
                 )
                 return@launch
             }
