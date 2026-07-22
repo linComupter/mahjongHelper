@@ -1,7 +1,7 @@
 # 国标麻将助手 (Guobiao Mahjong Assistant)
 
 Android app that analyzes a mahjong hand against Chinese Official (国标) rules:
-1. List achievable 国标 fan types (81 番種)
+1. List achievable 国标 fan types (21 番種)
 2. Calculate waiting tiles (听牌)
 3. Show remaining count of each waiting tile based on visible discards/melds
 
@@ -12,7 +12,7 @@ Android app that analyzes a mahjong hand against Chinese Official (国标) rules
 - **Language**: Kotlin 1.9.22
 - **Build**: Gradle 8.11.1, AGP 8.7.2, JDK 17
 - **Android SDK**: `E:\AndroidStudioSDK` (configured in `local.properties`)
-- **Engine tests**: JUnit 5 (89 tests, pure JVM — no Android device needed)
+- **Engine tests**: JUnit 5 (93 tests, pure JVM — no Android device needed)
 - **Git**: `https://github.com/linComupter/mahjongHelper.git` (origin)
 
 ## Project Structure
@@ -41,16 +41,17 @@ v4/
 │       │   ├── fan/                 # Fan type detection
 │       │   │   ├── FanContext.kt    # Context for fan detection (decomp + hand + win info)
 │       │   │   ├── FanUtils.kt      # Helper: suit counts, triplet counts, flush checks
-│       │   │   ├── FanRules.kt      # ~40 fan implementations (88番–1番)
-│       │   │   ├── FanScorer.kt     # Scoring: detect all → subsumes deduction → 8-fan minimum
+│       │   │   ├── FanRules.kt      # 21 fan implementations (24番–3番)
+│       │   │   ├── FanScorer.kt     # Scoring: detect all → subsumes deduction → 1-fan minimum
 │       │   │   ├── FanRegistry.kt   # All registered fan rules
 │       │   │   └── FanSettingsStore.kt  # User-overridable fan values (applied in FanScorer)
 │       │   ├── counter/
 │       │   │   └── TileCounter.kt   # Remaining = 4 − visible (hand+melds+river)
-│       ├── AnalysisSettings.kt  # Swap depth + persistence for analysis settings
-├── DevelopmentAnalyzer.kt   # Shanten + improvement-path analysis (multi-depth swap)
-│       └── RulesEngine.kt           # Top-level API
-└── test/                            # JUnit tests (89 total)
+│       │   ├── DevelopmentAnalyzer.kt   # Shanten + improvement-path analysis
+│       │   ├── FanReverseAnalyzer.kt     # Fan-type reverse analysis engine
+│       │   ├── AnalysisSettings.kt  # Swap depth + persistence for analysis settings
+│       │   └── RulesEngine.kt       # Top-level API
+│       └── test/                    # JUnit tests (93 total)
 ├── app/                             # Android app module
 │   └── src/main/java/com/mahjong/guobiao/
 │       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则 / 分析规则), tile picker, results
@@ -102,11 +103,12 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 2. **听牌态**：检查是否有等待牌可达1番起和；有→正常展示听牌，无→进入替换分析
 3. **非听牌态**：替换式分析，深度由`AnalysisSettings.swapDepth`控制（1~3，默认1），枚举弃N张×摸N张的替换组合
 
-深度1：`distinct(concealed) × 34` 种组合
-深度2：`C(distinct,2) × C(34,2)` 组合，最多200条结果截断
-深度3：`C(distinct,3) × C(34,3)` 组合，最多200条结果截断
+替换分析由 `FanReverseAnalyzer` 按番种倒推：对 21 种番种逐一计算不合规牌数 → 跳过超过深度的番种 → 对剩余番种按目标牌池枚举替换组合 → 快速向听预检淘汰无效组合 → 全量 TenpaiCalculator 验证 → 结果按番种聚合。
 
-替换分析输出按番种聚合：`SwapTarget` 含番种名、总概率、具体弃牌摸牌路径。每条路径含弃牌/摸牌/剩余张数/概率/后续听牌。
+深度1：浅层先行，找到路径即停止更深尝试
+深度2/3：仅对浅层无效的组合递进尝试；预检淘汰 ~75% 无效组合
+
+输出按番种聚合：`SwapTarget` 含番种名、总概率、具体弃牌摸牌路径。每条路径含弃牌/摸牌/剩余张数/概率/后续听牌。
 
 ### Analysis Settings
 `AnalysisSettings` (singleton, engine layer):
@@ -116,10 +118,19 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 - UI: "分析规则" tab 提供 Slider 调节深度 + 性能提示
 
 ### Fan Scoring
-Each `FanRule` has:
-- `value`: default fan points
-- `subsumes`: Set of fan IDs that are NOT counted when this fan is detected (e.g., 大四喜 subsumes 碰碰和)
-- `detect(ctx)`: detection logic
+21 种番种，番数范围 3~24：
+- 3番: 混一色, 碰碰胡
+- 4番: 七小对
+- 6番: 清一色
+- 8番: 豪华七对
+- 9番: 小三元, 混幺九
+- 10番: 四暗刻
+- 13番: 十三幺, 小四喜
+- 16番: 大三元, 双豪华七对, 红孔雀, 绿一色, 蓝一色
+- 20番: 字一色, 清幺九
+- 24番: 九莲宝灯, 大四喜, 三豪华七对, 大七星
+
+Each `FanRule` has: `value` (default fan points), `subsumes` (Set of fan IDs that are NOT counted), `detect(ctx)` (detection logic).
 
 `FanScorer.score()`: detect all → remove subsumed → sum (using `FanSettingsStore.getValue()`) → check ≥ 1 minimum.
 
@@ -135,13 +146,13 @@ Each `FanRule` has:
 
 ## Known Limitations (MVP)
 
-- **全不靠/七星不靠**: Disabled in `AllNonAdjacentChecker` — the precise definition needs official rulebook verification. Current loose implementation caused false positives in tenpai (e.g., 13 orphans + 2m was incorrectly deemed a win).
-- **81 番種 coverage**: ~40 implemented (88番: 大四喜/大三元/绿一色/九莲宝灯/四杠/十三幺; 64番: 四暗刻/连七对; 24番: 清一色/七对/小四喜/小三元; 12番: 三暗刻/三杠/大于五/小于五/三风刻/三色三同顺/三同刻; 8番: 碰碰和/混一色/混幺九/妙手回春/海底捞月/抢杠; 6番: 断幺/暗杠/明杠/箭刻/圈风刻/门风刻/双箭刻; 4番: 不求人/全求人/边张/嵌张/双暗刻; 2番: 无字; 1番: 自摸/花牌). Remaining types (组合龙/全不靠 subtypes/step-ascending sequences etc.) need official rulebook verification.
-- **Fan values**: Based on commonly-cited GuoBiao distributions. Some values may differ across rulebook editions.
-- **新增番种**: 豪华七对(8番)/双豪华七对(16番)/三豪华七对(24番)/红孔雀(16番)/蓝一色(16番)/大七星(24番)。WinChecker 新增 `checkLuxury` 支持 4 张同牌拆两对。
+- **全不靠/七星不靠**: Disabled in `AllNonAdjacentChecker` — the precise definition needs official rulebook verification.
+- **番種数量**: 21 种精选番种，删除了断幺/自摸/花牌/箭刻/圈风刻/门风刻等低频番种。
+- **Fan values**: 基于自定义规则版番数，可能与传统国标有差异。
 - **副露 (Melds) input**: UI supports 碰/吃/明杠/暗杠/加杠 via mode chips in the picker area. Meld creation checks 4-copy limit. Current melds shown between hand and picker grid, click to remove.
 - **牌河**: 分行展示（每行最多9张），超过4行高度可上下滚动。
 - **ML tile recognition**: Phase 2 (not started).
+- **听牌无效提示**: 听牌但无法起和时倒推结果为空时，提示用户增加分析深度。
 
 ## Design Decisions
 
@@ -151,7 +162,8 @@ Each `FanRule` has:
 - **`subsumes` as static Set per FanRule**: Declarative, no runtime transitive-closure computation needed.
 - **AllNonAdjacentChecker disabled rather than partially-correct**: False positives in tenpai damage the core use case more than false negatives for rare patterns.
 - **TileParser for tests**: Readable string notation ("1112345678999m5m") makes test cases self-documenting. Parser uses 'm'/'p'/'s' input notation independently of `toString()` Chinese output.
-- **Bottom navigation**: Two tabs (手牌分析 / 番数规则) via `Scaffold` + `NavigationBar`. Simple state-based switching (no NavHost), since only 2 screens.
+- **Bottom navigation**: Three tabs (手牌分析 / 番数规则 / 分析规则) via `Scaffold` + `NavigationBar`. Simple state-based switching (no NavHost), since only 3 screens.
 - **4-copy limit enforced in ViewModel**: `addTile()` and `addDiscard()` both check hand+melds+discards ≤ 4 per tile type.
 - **Click-to-remove**: Both hand tiles and discard tiles are clickable for removal. Clear-all buttons for each.
 - **Fan overrides persisted via SharedPreferences**: `FanSettingsStore.toProperties()` serializes to text; ViewModel saves on `onStop`, loads on `onCreate`.
+- **番种倒推替代通用枚举**: `FanReverseAnalyzer` 从目标番种反向推算所需替换路径，搜索量降低 100~10000 倍。
