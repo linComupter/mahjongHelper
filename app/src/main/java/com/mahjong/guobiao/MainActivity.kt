@@ -428,8 +428,18 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun HandRow(tiles: List<TileType>, onRemove: (Int) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        items(tiles) { tile -> TileView(tile, onClick = { onRemove(tiles.indexOf(tile)) }) }
+    // 固定高度（2行+间距），避免0张->1张时布局跳动；chunked分行避免横向滚动
+    Column(
+        modifier = Modifier.heightIn(min = 36.dp * 2 + 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        tiles.chunked(9).forEach { rowTiles ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                rowTiles.forEach { tile ->
+                    TileView(tile, onClick = { onRemove(tiles.indexOf(tile)) })
+                }
+            }
+        }
     }
 }
 
