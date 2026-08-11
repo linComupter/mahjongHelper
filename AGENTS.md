@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Android 国标麻将助手 (Guobiao Mahjong). Two Gradle modules: `:engine` (pure Kotlin JVM, all logic + 93 JUnit tests) and `:app` (Jetpack Compose UI).
+Android 国标麻将助手 (Guobiao Mahjong). Two Gradle modules: `:engine` (pure Kotlin JVM, all logic + 101 JUnit tests) and `:app` (Jetpack Compose UI).
 
 **Read `CLAUDE.md` first** — it is the authoritative architecture doc (tile encoding, win-detection algorithm, fan scoring, tenpai, swap analysis). Keep it in sync when you change architecture (commit history follows this convention).
 
@@ -36,5 +36,5 @@ No lint/typecheck/CI config exists — `:engine:test` is the verification step. 
 
 - `RulesEngine` is the top-level API (fans / tenpai / tenpai+counts / fullAnalysis); `WinChecker` + `StandardDecomposer` (DFS, lowest-tile-first) + `SevenPairsChecker` + `ThirteenOrphansChecker` handle win detection.
 - Tenpai = 34-way enumeration × `WinChecker`; remaining counts = 4 − visible (hand+melds+river).
-- Development analysis (`DevelopmentAnalyzer` / `FanReverseAnalyzer`) is fan-type reverse inference with swap depth 1–3 from `AnalysisSettings` — it's the most expensive path, perf-sensitive.
-- UI (`app`) is state-based bottom-nav (手牌分析 / 番数规则 / 分析规则) in `MainActivity.kt` + MVVM state in `ui/MahjongViewModel.kt`. 4-copy limit enforced in the ViewModel.
+- Development analysis (`DevelopmentAnalyzer` / `FanReverseAnalyzer`) is fan-type reverse inference with swap depth 1–3 from `AnalysisSettings` — it's the most expensive path, perf-sensitive. 14 张未和牌时 `DevelopmentAnalyzer.analyzeDiscard` 提供弃牌建议（弃后听牌/可达番种/能否起和）。
+- UI (`app`) is state-based bottom-nav (手牌分析 / 番数规则 / 分析规则) in `MainActivity.kt` + MVVM state in `ui/MahjongViewModel.kt`. 4-copy limit + meld validations (剩余张数/手牌+副露≤14/加杠需已有碰) enforced in the ViewModel, errors surfaced via `errorMessage` AlertDialog.

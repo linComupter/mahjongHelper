@@ -1,7 +1,7 @@
 # 国标麻将助手 (Guobiao Mahjong Assistant)
 
 Android app that analyzes a mahjong hand against Chinese Official (国标) rules:
-1. List achievable 国标 fan types (21 番種)
+1. List achievable 国标 fan types (22 番種)
 2. Calculate waiting tiles (听牌)
 3. Show remaining count of each waiting tile based on visible discards/melds
 
@@ -12,7 +12,7 @@ Android app that analyzes a mahjong hand against Chinese Official (国标) rules
 - **Language**: Kotlin 1.9.22
 - **Build**: Gradle 8.11.1, AGP 8.7.2, JDK 17
 - **Android SDK**: `E:\AndroidStudioSDK` (configured in `local.properties`)
-- **Engine tests**: JUnit 5 (93 tests, pure JVM — no Android device needed)
+- **Engine tests**: JUnit 5 (101 tests, pure JVM — no Android device needed)
 - **Git**: `https://github.com/linComupter/mahjongHelper.git` (origin)
 
 ## Project Structure
@@ -41,7 +41,7 @@ v4/
 │       │   ├── fan/                 # Fan type detection
 │       │   │   ├── FanContext.kt    # Context for fan detection (decomp + hand + win info)
 │       │   │   ├── FanUtils.kt      # Helper: suit counts, triplet counts, flush checks
-│       │   │   ├── FanRules.kt      # 21 fan implementations (24番–3番)
+│       │   │   ├── FanRules.kt      # 22 fan implementations (24番–3番)
 │       │   │   ├── FanScorer.kt     # Scoring: detect all → subsumes deduction → 1-fan minimum
 │       │   │   ├── FanRegistry.kt   # All registered fan rules
 │       │   │   └── FanSettingsStore.kt  # User-overridable fan values (applied in FanScorer)
@@ -51,11 +51,11 @@ v4/
 │       │   ├── FanReverseAnalyzer.kt     # Fan-type reverse analysis engine
 │       │   ├── AnalysisSettings.kt  # Swap depth + persistence for analysis settings
 │       │   └── RulesEngine.kt       # Top-level API
-│       └── test/                    # JUnit tests (93 total)
+│       └── test/                    # JUnit tests (101 total)
 ├── app/                             # Android app module
 │   └── src/main/java/com/mahjong/guobiao/
-│       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则 / 分析规则), tile picker, results
-│       └── ui/MahjongViewModel.kt  # MVVM: hand/meld/discard state, 4-copy limit, addMeld/removeMeld, persistence
+│       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则 / 分析规则), tile picker, results, edge-to-edge
+│       └── ui/MahjongViewModel.kt  # MVVM: hand/meld/discard state, 4-copy limit, addMeld/addKanToPon, discard suggestions, persistence
 ├── build.gradle.kts                 # Root: AGP 8.7.2 + Kotlin 1.9.22
 ├── settings.gradle.kts              # Includes :engine and :app
 ├── gradle.properties                # android.useAndroidX=true
@@ -103,7 +103,9 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 2. **听牌态**：检查是否有等待牌可达1番起和；有→正常展示听牌，无→进入替换分析
 3. **非听牌态**：替换式分析，深度由`AnalysisSettings.swapDepth`控制（1~3，默认1），枚举弃N张×摸N张的替换组合
 
-替换分析由 `FanReverseAnalyzer` 按番种倒推：对 21 种番种逐一计算不合规牌数 → 跳过超过深度的番种 → 对剩余番种按目标牌池枚举替换组合 → 快速向听预检淘汰无效组合 → 全量 TenpaiCalculator 验证 → 结果按番种聚合。
+14 张 (winSize) 未和牌时进入**弃牌建议**：`DevelopmentAnalyzer.analyzeDiscard()` 枚举弃掉每张暗手牌，对弃后 13 张计算听牌与可达番种（`TenpaiCalculator` + `FanScorer`），返回 `DiscardSuggestion(discardTile/resultingWaits/reachesMinimum/possibleFans/waitCount)`，按"可起和优先、听牌数多优先、牌型升序"排序。UI 展示列表，点选查看详情弹窗。
+
+替换分析由 `FanReverseAnalyzer` 按番种倒推：对 22 种番种逐一计算不合规牌数 → 跳过超过深度的番种 → 对剩余番种按目标牌池枚举替换组合 → 快速向听预检淘汰无效组合 → 全量 TenpaiCalculator 验证 → 结果按番种聚合。
 
 深度1：浅层先行，找到路径即停止更深尝试
 深度2/3：仅对浅层无效的组合递进尝试；预检淘汰 ~75% 无效组合
@@ -118,8 +120,8 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 - UI: "分析规则" tab 提供 Slider 调节深度 + 性能提示
 
 ### Fan Scoring
-21 种番种，番数范围 3~24：
-- 3番: 混一色, 碰碰胡
+22 种番种，番数范围 3~24：
+- 3番: 混一色, 碰碰胡, 门清
 - 4番: 七小对
 - 6番: 清一色
 - 8番: 豪华七对
@@ -134,6 +136,8 @@ Each `FanRule` has: `value` (default fan points), `subsumes` (Set of fan IDs tha
 
 `FanScorer.score()`: detect all → remove subsumed → sum (using `FanSettingsStore.getValue()`) → check ≥ 1 minimum.
 
+门清 (`Menzen`, 3番) 为附加番：`detect` 仅判定"无副露或全为暗杠"，但 `FanScorer` 会在"仅门清一种被检测到"时将其剔除（需同时满足至少一种其他番型才计入）。倒推分析 `FanReverseAnalyzer.reverse()` 对 `menzen` 返回 null，不作为发展目标。
+
 ### Fan Settings
 `FanSettingsStore` (singleton, engine layer):
 - `getValue(rule)` → overridden value or default
@@ -147,9 +151,9 @@ Each `FanRule` has: `value` (default fan points), `subsumes` (Set of fan IDs tha
 ## Known Limitations (MVP)
 
 - **全不靠/七星不靠**: Disabled in `AllNonAdjacentChecker` — the precise definition needs official rulebook verification.
-- **番種数量**: 21 种精选番种，删除了断幺/自摸/花牌/箭刻/圈风刻/门风刻等低频番种。
+- **番種数量**: 22 种精选番种，删除了断幺/自摸/花牌/箭刻/圈风刻/门风刻等低频番种。
 - **Fan values**: 基于自定义规则版番数，可能与传统国标有差异。
-- **副露 (Melds) input**: UI supports 碰/吃/明杠/暗杠/加杠 via mode chips in the picker area. Meld creation checks 4-copy limit. Current melds shown between hand and picker grid, click to remove.
+- **副露 (Melds) input**: UI supports 碰/吃/明杠/暗杠/加杠 via mode chips in the picker area. Validation in `MahjongViewModel.addMeld`/`addKanToPon`: 剩余张数（碰≥3、明杠/暗杠=4、吃每张≥1）与手牌+副露≤14（杠按3张计）不满足时弹出 `errorMessage` 提示；加杠仅可将已存在的碰副露改为加杠，加杠模式下其他牌不可点击。Current melds shown between hand and picker grid, click to remove.
 - **牌河**: 分行展示（每行最多9张），超过4行高度可上下滚动。
 - **ML tile recognition**: Phase 2 (not started).
 - **听牌无效提示**: 听牌但无法起和时倒推结果为空时，提示用户增加分析深度。

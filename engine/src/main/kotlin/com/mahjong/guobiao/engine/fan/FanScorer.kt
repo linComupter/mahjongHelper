@@ -28,7 +28,13 @@ object FanScorer {
     private const val MINIMUM_FAN = 1
 
     fun score(ctx: FanContext): FanResult {
-        val detected = FanRegistry.detectAll(ctx)
+        val detected = FanRegistry.detectAll(ctx).toMutableList()
+
+        // 门清为附加番：仅在同时满足至少一种其他番型时计入（单独门清不计）
+        if (detected.singleOrNull()?.id == Menzen.id) {
+            detected.clear()
+        }
+
         val detectedIds = detected.map { it.id }.toSet()
 
         // 被任一高番 subsumes 的番种标记为不计

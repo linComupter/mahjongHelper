@@ -2,6 +2,7 @@ package com.mahjong.guobiao.engine.fan
 
 import com.mahjong.guobiao.engine.win.WinChecker
 import com.mahjong.guobiao.model.Hand
+import com.mahjong.guobiao.model.Meld
 import com.mahjong.guobiao.model.PlayerSeat
 import com.mahjong.guobiao.model.TileParser
 import com.mahjong.guobiao.model.TileType
@@ -164,5 +165,47 @@ class FanDetectorTest {
         // 大四喜: 4风刻子，必然也是碰碰胡
         val result = scoreHand("东东东南南南西西西北北北1m1m")
         assertTrue(isSubsumed(result, "碰碰胡"))
+    }
+
+    @Test
+    fun `门清附加于其他番型`() {
+        // 清一色(6) + 门清(3)，门清应计入
+        val result = scoreHand("123m123m456m789m11m")
+        assertTrue(hasFan(result, "清一色"))
+        assertTrue(hasFan(result, "门清"))
+    }
+
+    @Test
+    fun `门清单独不计`() {
+        // 无任何21番种、仅门清 → 门清不计
+        val result = scoreHand("123m456m123p789p55s")
+        assertFalse(hasFan(result, "门清"))
+    }
+
+    @Test
+    fun `门清仅暗杠可计入`() {
+        // 暗杠不破坏门清：1m暗杠 + 清一色
+        val hand = Hand(
+            concealed = TileParser.parse("234m567m888m99m"),
+            melds = listOf(Meld.kanClosed(TileType.man(1)))
+        )
+        val decomps = WinChecker.getAllDecompositions(hand)
+        assert(decomps.isNotEmpty())
+        val result = FanScorer.score(FanContext(decomps.first(), hand, WinInfo(hand.concealed.last())))
+        assertTrue(result.allDetected.any { it.name == "门清" })
+    }
+
+    @Test
+    fun `门清含明副露不计`() {
+        // 明碰破坏门清：三副露碰碰胡，无门清
+        val hand = Hand(
+            concealed = TileParser.parse("555m44p"),
+            melds = listOf(Meld.pon(TileType.man(1)), Meld.pon(TileType.man(2)), Meld.pon(TileType.man(3)))
+        )
+        val decomps = WinChecker.getAllDecompositions(hand)
+        assert(decomps.isNotEmpty())
+        val result = FanScorer.score(FanContext(decomps.first(), hand, WinInfo(hand.concealed.last())))
+        assertFalse(result.allDetected.any { it.name == "门清" })
+        assertTrue(result.allDetected.any { it.name == "碰碰胡" })
     }
 }

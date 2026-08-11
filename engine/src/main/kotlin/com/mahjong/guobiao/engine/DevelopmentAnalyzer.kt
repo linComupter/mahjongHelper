@@ -51,6 +51,15 @@ object DevelopmentAnalyzer {
         val maxDepthUsed: Int = 1
     )
 
+    /** 14张(winSize)未和牌时的弃牌建议：弃某张后剩余13张的听牌与可达番种。 */
+    data class DiscardSuggestion(
+        val discardTile: TileType,            // 建议弃掉的牌
+        val resultingWaits: List<TileType>,   // 弃后听牌
+        val reachesMinimum: Boolean,          // 弃后听牌能否 1 番起和
+        val possibleFans: List<FanRule>,      // 弃后可达番种（聚合所有听牌的所有分解）
+        val waitCount: Int                    // 听牌张数
+    )
+
     fun hasValidTenpai(hand: Hand): Boolean {
         if (!hand.isValidTenpaiSize()) return false
         return TenpaiCalculator.waitingTiles(hand).any { wait ->
@@ -59,6 +68,43 @@ object DevelopmentAnalyzer {
                 FanScorer.score(FanContext(decomp, winHand, WinInfo(wait))).meetsMinimum
             }
         }
+    }
+
+    /**
+     * 14张(winSize)未和牌的弃牌建议：枚举弃掉每张暗手牌，分析弃后13张的听牌与可达番种。
+     * 调用方需保证 size == winSize 且未和牌。tableState 预留用于后续扩展听牌剩余张数。
+     */
+    fun analyzeDiscard(hand: Hand, @Suppress("UNUSED_PARAMETER") tableState: TableState): List<DiscardSuggestion> {
+        val suggestions = mutableListOf<DiscardSuggestion>()
+        for (disc in hand.concealed.distinct()) {
+            val after = hand.concealed.toMutableList().apply { remove(disc) }
+            val newHand = hand.withConcealed(after.sorted())
+            if (!newHand.isValidTenpaiSize()) continue
+            val waits = TenpaiCalculator.waitingTiles(newHand)
+            if (waits.isEmpty()) {
+                suggestions.add(DiscardSuggestion(disc, emptyList(), false, emptyList(), 0))
+                continue
+            }
+            val fans = mutableSetOf<FanRule>()
+            var reachesMin = false
+            for (wait in waits) {
+                val winHand = newHand.withConcealed((after + wait).sorted())
+                if (!winHand.isValidWinSize()) continue
+                for (decomp in WinChecker.getAllDecompositions(winHand)) {
+                    val result = FanScorer.score(FanContext(decomp, winHand, WinInfo(wait)))
+                    if (result.meetsMinimum) {
+                        reachesMin = true
+                        fans.addAll(result.allDetected)
+                    }
+                }
+            }
+            suggestions.add(DiscardSuggestion(disc, waits, reachesMin, fans.toList(), waits.size))
+        }
+        return suggestions.sortedWith(
+            compareByDescending<DiscardSuggestion> { it.reachesMinimum }
+                .thenByDescending { it.waitCount }
+                .thenBy { it.discardTile.code }
+        )
     }
 
     fun analyze(hand: Hand, tableState: TableState): DevelopmentResult {

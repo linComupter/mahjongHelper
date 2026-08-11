@@ -2,7 +2,9 @@ package com.mahjong.guobiao
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +16,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -43,12 +47,18 @@ import com.mahjong.guobiao.model.TileType
 import com.mahjong.guobiao.ui.FanTargetUi
 import com.mahjong.guobiao.ui.MahjongViewModel
 import com.mahjong.guobiao.ui.SwapTargetUi
+import com.mahjong.guobiao.ui.DiscardSuggestionUi
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: MahjongViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 显式管理 edge-to-edge：浅色背景 → 深色状态栏图标，避免与背景同化
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         val vm: MahjongViewModel by viewModels()
         viewModel = vm
         viewModel.loadSettings(this)
@@ -105,6 +115,7 @@ fun MahjongApp(vm: MahjongViewModel) {
 
 // ── 手牌分析页 ──
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
     val state by vm.state.collectAsState()
@@ -152,7 +163,7 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
         SectionHeader("点牌加入手牌 / 记入牌河 / 创建副露")
         var pickerMode by remember { mutableStateOf(PickerMode.HAND) }
         var meldKind by remember { mutableStateOf<MeldType?>(null) }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             FilterChip(selected = pickerMode == PickerMode.HAND, onClick = { pickerMode = PickerMode.HAND; meldKind = null }, label = { Text("加入手牌") })
             FilterChip(selected = pickerMode == PickerMode.DISCARD, onClick = { pickerMode = PickerMode.DISCARD; meldKind = null }, label = { Text("记入牌河") })
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.PON, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.PON }, label = { Text("碰") })
@@ -161,9 +172,18 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_CLOSED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_CLOSED }, label = { Text("暗杠") })
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_ADDED }, label = { Text("加杠") })
         }
+        // 加杠模式：仅已存在碰副露的牌可点选，其他牌不可点击
+        val isKanMode = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED
+        val kanTargets = remember(state.melds) {
+            state.melds.filter { it.type == MeldType.PON }.map { it.tiles.first() }.toSet()
+        }
         TilePickerGrid(
             onPick = { tile ->
                 when {
+                    pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED -> {
+                        vm.addKanToPon(tile)
+                        meldKind = null; pickerMode = PickerMode.HAND
+                    }
                     pickerMode == PickerMode.MELD && meldKind != null -> {
                         vm.addMeld(meldKind!!, tile)
                         meldKind = null; pickerMode = PickerMode.HAND
@@ -172,7 +192,8 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     pickerMode == PickerMode.DISCARD -> vm.addDiscard(tile)
                 }
             },
-            remaining = { tile -> 4 - state.concealed.count { it == tile } - state.melds.flatMap { m -> m.tiles }.count { it == tile } - state.discards.count { it == tile } }
+            remaining = { tile -> 4 - state.concealed.count { it == tile } - state.melds.flatMap { m -> m.tiles }.count { it == tile } - state.discards.count { it == tile } },
+            enabled = { tile -> !isKanMode || tile in kanTargets }
         )
 
         Spacer(Modifier.height(8.dp))
@@ -211,6 +232,38 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     Text("${wt.tile}  剩余 ${wt.remainingCount} 张", fontSize = 15.sp)
                     Text(wt.possibleFanNames.joinToString(" "), fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 }
+            }
+        } else if (state.discardSuggestions.isNotEmpty()) {
+            SectionHeader("弃牌建议（14张未和牌，点选查看详情）")
+            var detailDiscard by remember { mutableStateOf<DiscardSuggestionUi?>(null) }
+            state.discardSuggestions.forEach { ds ->
+                val waitStr = if (ds.waits.isNotEmpty()) ds.waits.joinToString("") { it.toString() } else "不听"
+                Surface(
+                    onClick = { detailDiscard = ds },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    color = if (ds.reachesMinimum) Color(0xFFE8F5E9) else Color(0xFFF0F4F8),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("弃 ${ds.discardTile} -> 听 $waitStr（${ds.waitCount}张）", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(if (ds.reachesMinimum) "可起和" else "", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+            detailDiscard?.let { ds ->
+                AlertDialog(
+                    onDismissRequest = { detailDiscard = null },
+                    title = { Text("弃 ${ds.discardTile}") },
+                    text = {
+                        Column {
+                            Text("听牌: ${if (ds.waits.isNotEmpty()) ds.waits.joinToString("") { it.toString() } else "无"}（${ds.waitCount}张）", fontSize = 13.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text("可达番种: ${if (ds.possibleFanNames.isNotEmpty()) ds.possibleFanNames.joinToString(" ") else "无"}", fontSize = 13.sp)
+                            Text(if (ds.reachesMinimum) "✓ 可 1 番起和" else "暂无法 1 番起和", fontSize = 13.sp, color = if (ds.reachesMinimum) MaterialTheme.colorScheme.primary else Color.Gray)
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { detailDiscard = null }) { Text("关闭") } }
+                )
             }
         } else if (state.swapTargets.isNotEmpty()) {
             val label = if (state.isTenpaiNoFan) "已听牌但无法1番起和 — 点选牌型查看可替换的牌" else "弃一张摸一张可发展的牌型（点击查看详情）"
@@ -295,6 +348,16 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                 )
             }
         }
+    }
+
+    // 操作校验错误弹窗（碰/吃/明杠/暗杠/加杠/上限）
+    state.errorMessage?.let { err ->
+        AlertDialog(
+            onDismissRequest = { vm.clearError() },
+            title = { Text("提示") },
+            text = { Text(err) },
+            confirmButton = { TextButton(onClick = { vm.clearError() }) { Text("确定") } }
+        )
     }
 }
 
@@ -444,30 +507,44 @@ fun HandRow(tiles: List<TileType>, onRemove: (Int) -> Unit) {
 }
 
 @Composable
-fun TilePickerGrid(onPick: (TileType) -> Unit, remaining: (TileType) -> Int = { 0 }) {
+fun TilePickerGrid(
+    onPick: (TileType) -> Unit,
+    remaining: (TileType) -> Int = { 0 },
+    enabled: (TileType) -> Boolean = { true }
+) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(9),
         modifier = Modifier.heightIn(max = 260.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        items(TileType.ALL_NON_FLOWER) { tile -> TileView(tile, remaining = remaining(tile), onClick = { onPick(tile) }) }
+        items(TileType.ALL_NON_FLOWER) { tile ->
+            TileView(tile, remaining = remaining(tile), enabled = enabled(tile), onClick = { onPick(tile) })
+        }
     }
 }
 
 @Composable
-fun TileView(tile: TileType, remaining: Int = -1, onClick: () -> Unit) {
+fun TileView(tile: TileType, remaining: Int = -1, enabled: Boolean = true, onClick: () -> Unit) {
     val bg = when {
+        !enabled -> Color(0xFFE0E0E0)
         remaining == 0 -> Color(0xFFE0E0E0)
         tile.isHonor -> Color(0xFFE8DCC8)
         tile.isTerminal -> Color(0xFFDCE8DC)
         else -> Color(0xFFF5F5F5)
     }
     Box(
-        modifier = Modifier.size(36.dp).background(bg, RoundedCornerShape(4.dp)).border(1.dp, Color.Gray, RoundedCornerShape(4.dp)).clickable(onClick = onClick),
+        modifier = Modifier
+            .size(36.dp)
+            .background(bg, RoundedCornerShape(4.dp))
+            .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
     ) {
-        Text(tile.toString(), fontSize = 13.sp, textAlign = TextAlign.Center, color = if (remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray)
+        Text(
+            tile.toString(), fontSize = 13.sp, textAlign = TextAlign.Center,
+            color = if (!enabled || remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray
+        )
         // 右上角剩余张数角标
         if (remaining >= 0) {
             Box(
