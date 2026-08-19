@@ -41,6 +41,153 @@ object StandardDecomposer {
         }.distinct()
     }
 
+    // ── 赖子（赖子牌可替代任意牌）标准形分解 ──
+
+    /**
+     * 赖子模式的标准形分解：wildcard 指定的牌型在本手牌中全部按"赖子"处理，
+     * 可替代任意牌（雀头/刻子/顺子任意位置）。分解结果为具体牌（赖子落位到替代的牌），
+     * 供番种判定直接使用。
+     */
+    fun decomposeWildcard(hand: Hand, wildcard: TileType): List<Decomposition> {
+        if (!hand.isValidWinSize()) return emptyList()
+        val counts = hand.concealedCounts()
+        val w = counts[wildcard]
+        if (w == 0) return decompose(hand)
+        counts[wildcard] = 0  // 赖子移出实牌计数，作为可替代牌张
+        val meldsToFind = 4 - hand.meldCount
+        val results = mutableListOf<List<Meld>>()
+        val current = mutableListOf<Meld>()
+        dfsWild(counts, w, meldsToFind, pairNeeded = true, current, results, wildcard)
+        val fixed = hand.melds
+        return results.map { found ->
+            Decomposition(
+                DecompositionType.STANDARD,
+                fixed + found.filter { !it.isPair },
+                found.first { it.isPair }
+            )
+        }.distinct()
+    }
+
+    private fun dfsWild(
+        counts: TileCounts,
+        w: Int,
+        meldsToFind: Int,
+        pairNeeded: Boolean,
+        current: MutableList<Meld>,
+        results: MutableList<List<Meld>>,
+        wildcard: TileType
+    ) {
+        val remaining = counts.totalCount() + w
+        if (remaining == 0) {
+            if (meldsToFind == 0 && !pairNeeded) results.add(current.toList())
+            return
+        }
+        val needed = meldsToFind * 3 + (if (pairNeeded) 2 else 0)
+        if (remaining < needed) return
+        if (meldsToFind == 0 && !pairNeeded) return
+
+        val t = counts.firstNonZero()
+        if (t == null) {
+            // 只剩赖子：整组拆为面子/雀头（赖子按自身牌型计，供番种判定）
+            if (remaining == needed) {
+                val groups = current.toMutableList()
+                if (pairNeeded) groups.add(Meld.pair(wildcard))
+                repeat(meldsToFind) { groups.add(Meld.tripletConcealed(wildcard)) }
+                results.add(groups)
+            }
+            return
+        }
+
+        // 雀头：t 作雀头，差几张用赖子补
+        if (pairNeeded) {
+            val r = counts[t]
+            for (tReal in 1..minOf(r, 2)) {
+                if (2 - tReal <= w) {
+                    counts.remove(t, tReal)
+                    current.add(Meld.pair(t))
+                    dfsWild(counts, w - (2 - tReal), meldsToFind, false, current, results, wildcard)
+                    current.removeAt(current.lastIndex)
+                    counts.add(t, tReal)
+                }
+            }
+        }
+
+        // 刻子：t 作刻子
+        if (meldsToFind > 0) {
+            val r = counts[t]
+            for (tReal in 1..minOf(r, 3)) {
+                if (3 - tReal <= w) {
+                    counts.remove(t, tReal)
+                    current.add(Meld.tripletConcealed(t))
+                    dfsWild(counts, w - (3 - tReal), meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex)
+                    counts.add(t, tReal)
+                }
+            }
+        }
+
+        // 顺子：t 可位于顺子首位/中间/末尾（中间、末尾的低位由赖子补齐）
+        if (meldsToFind > 0 && t.isSuited) {
+            // 1) 首位：t, t+1, t+2
+            if (t.rank <= 7) {
+                val t1 = t.nextRank()!!
+                val t2 = t1.nextRank()!!
+                val r1 = counts[t1]; val r2 = counts[t2]
+                if (r1 > 0 && r2 > 0) {
+                    counts.remove(t); counts.remove(t1); counts.remove(t2)
+                    current.add(Meld.sequenceConcealed(t))
+                    dfsWild(counts, w, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t); counts.add(t1); counts.add(t2)
+                }
+                if (r1 > 0 && w >= 1) {
+                    counts.remove(t); counts.remove(t1)
+                    current.add(Meld.sequenceConcealed(t))
+                    dfsWild(counts, w - 1, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t); counts.add(t1)
+                }
+                if (w >= 1 && r2 > 0) {
+                    counts.remove(t); counts.remove(t2)
+                    current.add(Meld.sequenceConcealed(t))
+                    dfsWild(counts, w - 1, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t); counts.add(t2)
+                }
+                if (w >= 2) {
+                    counts.remove(t)
+                    current.add(Meld.sequenceConcealed(t))
+                    dfsWild(counts, w - 2, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t)
+                }
+            }
+            // 2) 中间：t-1(赖), t, t+1
+            if (t.rank >= 2 && t.rank <= 8) {
+                val tPrev = t.prevRank()!!
+                val tNext = t.nextRank()!!
+                val rn = counts[tNext]
+                if (w >= 1 && rn > 0) {
+                    counts.remove(t); counts.remove(tNext)
+                    current.add(Meld.sequenceConcealed(tPrev))
+                    dfsWild(counts, w - 1, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t); counts.add(tNext)
+                }
+                if (w >= 2) {
+                    counts.remove(t)
+                    current.add(Meld.sequenceConcealed(tPrev))
+                    dfsWild(counts, w - 2, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t)
+                }
+            }
+            // 3) 末尾：t-2(赖), t-1(赖), t
+            if (t.rank >= 3) {
+                if (w >= 2) {
+                    counts.remove(t)
+                    current.add(Meld.sequenceConcealed(t.prevRank()!!.prevRank()!!))
+                    dfsWild(counts, w - 2, meldsToFind - 1, pairNeeded, current, results, wildcard)
+                    current.removeAt(current.lastIndex); counts.add(t)
+                }
+            }
+        }
+    }
+
     private fun dfs(
         counts: TileCounts,
         meldsToFind: Int,

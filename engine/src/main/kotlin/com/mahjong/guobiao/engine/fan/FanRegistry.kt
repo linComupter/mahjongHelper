@@ -6,6 +6,7 @@ object FanRegistry {
         // 3番
         HalfFlush,
         AllTriplets,
+        Menzen,
         // 4番
         SevenPairsFan,
         // 6番

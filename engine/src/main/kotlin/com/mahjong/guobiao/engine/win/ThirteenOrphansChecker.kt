@@ -12,10 +12,14 @@ import com.mahjong.guobiao.model.TileType
  */
 object ThirteenOrphansChecker {
 
-    fun check(hand: Hand): Decomposition? {
+    fun check(hand: Hand, wildcard: TileType? = null): Decomposition? {
         if (!hand.isClosed) return null
         if (!hand.isValidWinSize()) return null
+        if (wildcard == null) return checkPlain(hand)
+        return checkWildcard(hand, wildcard)
+    }
 
+    private fun checkPlain(hand: Hand): Decomposition? {
         val counts = hand.concealedCounts()
 
         // 非幺九字牌必须为 0
@@ -37,6 +41,51 @@ object ThirteenOrphansChecker {
         }
 
         val pair = pairTile?.let { Meld.pair(it) }
+        return Decomposition(DecompositionType.THIRTEEN_ORPHANS, emptyList(), pair)
+    }
+
+    /**
+     * 赖子十三幺：缺的幺九字用赖子顶上，雀头也可由赖子充当。
+     * 规则要点：
+     * - 非幺九字实牌为 0；
+     * - 每张实牌幺九字至多 2 张（2 张可作雀头）；
+     * - 需用赖子补足的位：非赖子幺九字中实牌为 0 的位，加上赖子自身所在的幺九字位（若赖子为幺九字且 w>0，该位正好由 1 个赖子充当）；
+     * - 若实牌无雀头，还需要 1 个赖子当雀头。赖子总数须恰好等于上述两个需求之和。
+     */
+    private fun checkWildcard(hand: Hand, wildcard: TileType): Decomposition? {
+        val counts = hand.concealedCounts()
+        val w = counts[wildcard]
+        counts[wildcard] = 0
+
+        // 非幺九字实牌必须为 0
+        for (t in TileType.ALL_NON_FLOWER) {
+            if (t == wildcard) continue
+            if (t !in TileType.TERMINALS_HONORS && counts[t] > 0) return null
+        }
+        for (t in TileType.TERMINALS_HONORS) {
+            if (t != wildcard && counts[t] > 2) return null
+        }
+
+        var pairTile: TileType? = null
+        for (t in TileType.TERMINALS_HONORS) {
+            if (t == wildcard) continue
+            if (counts[t] == 2) {
+                if (pairTile != null) return null
+                pairTile = t
+            }
+        }
+
+        // 需赖子补足的幺九字位：每个缺位的幺九字都需 1 个赖子；
+        // 若赖子自身为幺九字，该位也需 1 个赖子充当（缺位与否都计入需求）。
+        var missing = 0
+        for (t in TileType.TERMINALS_HONORS) {
+            if (t == wildcard || counts[t] == 0) missing++
+        }
+        // 雀头需求：实牌无雀头 → 需 1 个赖子当雀头
+        val needW = missing + (if (pairTile == null) 1 else 0)
+        if (w != needW) return null
+
+        val pair = pairTile?.let { Meld.pair(it) } ?: Meld.pair(wildcard)
         return Decomposition(DecompositionType.THIRTEEN_ORPHANS, emptyList(), pair)
     }
 }

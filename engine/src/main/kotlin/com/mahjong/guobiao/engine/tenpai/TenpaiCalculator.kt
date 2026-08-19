@@ -29,10 +29,12 @@ object TenpaiCalculator {
     /**
      * 计算听牌。返回所有听牌及对应分解。
      * @param usedCounts 已使用牌计数（自暗手+自副露），用于剪枝：某牌已用 4 张则不可听。null 不剪枝。
+     * @param wildcard 赖子牌（赖子模式），由 WinChecker 决定和牌规则。null 为纯大模式。
      */
     fun calculate(
         hand: Hand,
-        usedCounts: Map<TileType, Int>? = null
+        usedCounts: Map<TileType, Int>? = null,
+        wildcard: TileType? = null
     ): List<WaitingTile> {
         require(hand.isValidTenpaiSize()) {
             "听牌需暗手 ${hand.concealedCountForTenpai()} 张，实际 ${hand.concealed.size}"
@@ -53,7 +55,7 @@ object TenpaiCalculator {
 
             // 模拟摸到 t
             val testHand = hand.withConcealed(hand.concealed + t)
-            val decompositions = WinChecker.getAllDecompositions(testHand)
+            val decompositions = WinChecker.getAllDecompositions(testHand, wildcard)
             if (decompositions.isNotEmpty()) {
                 waiting.add(WaitingTile(t, decompositions))
             }
@@ -63,6 +65,6 @@ object TenpaiCalculator {
     }
 
     /** 便捷：返回听牌牌型列表。 */
-    fun waitingTiles(hand: Hand, usedCounts: Map<TileType, Int>? = null): List<TileType> =
-        calculate(hand, usedCounts).map { it.tile }
+    fun waitingTiles(hand: Hand, usedCounts: Map<TileType, Int>? = null, wildcard: TileType? = null): List<TileType> =
+        calculate(hand, usedCounts, wildcard).map { it.tile }
 }

@@ -51,64 +51,111 @@ object DevelopmentAnalyzer {
         val maxDepthUsed: Int = 1
     )
 
-    fun hasValidTenpai(hand: Hand): Boolean {
+    /** 14张(winSize)未和牌时的弃牌建议：弃某张后剩余13张的听牌与可达番种。 */
+    data class DiscardSuggestion(
+        val discardTile: TileType,            // 建议弃掉的牌
+        val resultingWaits: List<TileType>,   // 弃后听牌
+        val reachesMinimum: Boolean,          // 弃后听牌能否 1 番起和
+        val possibleFans: List<FanRule>,      // 弃后可达番种（聚合所有听牌的所有分解）
+        val waitCount: Int                    // 听牌张数
+    )
+
+    fun hasValidTenpai(hand: Hand, wildcard: TileType? = null): Boolean {
         if (!hand.isValidTenpaiSize()) return false
-        return TenpaiCalculator.waitingTiles(hand).any { wait ->
+        return TenpaiCalculator.waitingTiles(hand, wildcard = wildcard).any { wait ->
             val winHand = hand.withConcealed((hand.concealed + wait).sorted())
-            WinChecker.getAllDecompositions(winHand).any { decomp ->
-                FanScorer.score(FanContext(decomp, winHand, WinInfo(wait))).meetsMinimum
+            WinChecker.getAllDecompositions(winHand, wildcard).any { decomp ->
+                FanScorer.score(FanContext.of(decomp, winHand, WinInfo(wait), wildcard)).meetsMinimum
             }
         }
     }
 
-    fun analyze(hand: Hand, tableState: TableState): DevelopmentResult {
+    /**
+     * 14张(winSize)未和牌的弃牌建议：枚举弃掉每张暗手牌，分析弃后13张的听牌与可达番种。
+     * 调用方需保证 size == winSize 且未和牌。tableState 预留用于后续扩展听牌剩余张数。
+     * @param wildcard 赖子牌（赖子模式）；null 为纯大模式。
+     */
+    fun analyzeDiscard(hand: Hand, @Suppress("UNUSED_PARAMETER") tableState: TableState, wildcard: TileType? = null): List<DiscardSuggestion> {
+        val suggestions = mutableListOf<DiscardSuggestion>()
+        for (disc in hand.concealed.distinct()) {
+            val after = hand.concealed.toMutableList().apply { remove(disc) }
+            val newHand = hand.withConcealed(after.sorted())
+            if (!newHand.isValidTenpaiSize()) continue
+            val waits = TenpaiCalculator.waitingTiles(newHand, wildcard = wildcard)
+            if (waits.isEmpty()) {
+                suggestions.add(DiscardSuggestion(disc, emptyList(), false, emptyList(), 0))
+                continue
+            }
+            val fans = mutableSetOf<FanRule>()
+            var reachesMin = false
+            for (wait in waits) {
+                val winHand = newHand.withConcealed((after + wait).sorted())
+                if (!winHand.isValidWinSize()) continue
+                for (decomp in WinChecker.getAllDecompositions(winHand, wildcard)) {
+                    val result = FanScorer.score(FanContext.of(decomp, winHand, WinInfo(wait), wildcard))
+                    if (result.meetsMinimum) {
+                        reachesMin = true
+                        fans.addAll(result.allDetected)
+                    }
+                }
+            }
+            suggestions.add(DiscardSuggestion(disc, waits, reachesMin, fans.toList(), waits.size))
+        }
+        return suggestions.sortedWith(
+            compareByDescending<DiscardSuggestion> { it.reachesMinimum }
+                .thenByDescending { it.waitCount }
+                .thenBy { it.discardTile.code }
+        )
+    }
+
+    fun analyze(hand: Hand, tableState: TableState, wildcard: TileType? = null): DevelopmentResult {
         val totalTiles = 136
         val tenpaiSize = hand.concealedCountForTenpai()
         val winSize = hand.concealedCountForWin()
         val size = hand.concealed.size
 
-        if (size == winSize && WinChecker.isWin(hand))
+        if (size == winSize && WinChecker.isWin(hand, wildcard))
             return DevelopmentResult(-1, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), emptyList())
 
         if (size == tenpaiSize && hand.isValidTenpaiSize()) {
-            val waits = TenpaiCalculator.waitingTiles(hand)
-            val hasValid = waits.isNotEmpty() && hasValidTenpai(hand)
+            val waits = TenpaiCalculator.waitingTiles(hand, wildcard = wildcard)
+            val hasValid = waits.isNotEmpty() && hasValidTenpai(hand, wildcard)
             if (hasValid) {
                 val imps = waits.map { w ->
                     val r = 4 - visibleCount(w, hand, tableState)
                     ImprovementPath(w, r, r.toDouble() / remainingTotal(hand, tableState, totalTiles), emptyList(), ImprovementType.TO_WIN)
                 }
-                return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), groupByFans(hand, imps), emptyList())
+                return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), groupByFans(hand, imps, wildcard), emptyList())
             } else if (waits.isNotEmpty()) {
-                val (swaps, used) = analyzeSwap(hand, tableState, totalTiles, tenpaiSize)
+                val (swaps, used) = analyzeSwap(hand, tableState, totalTiles, tenpaiSize, wildcard)
                 return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), swaps, true, used)
             }
             return DevelopmentResult(0, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), emptyList())
         }
 
         val shanten = tenpaiSize - size
-        val (swaps, used) = analyzeSwap(hand, tableState, totalTiles, tenpaiSize)
+        val (swaps, used) = analyzeSwap(hand, tableState, totalTiles, tenpaiSize, wildcard)
         return DevelopmentResult(shanten, remainingTotal(hand, tableState, totalTiles), emptyList(), emptyList(), swaps, maxDepthUsed = used)
     }
 
     /** 替换式分析：由 FanReverseAnalyzer 按番种倒推。 */
-    private fun analyzeSwap(hand: Hand, tableState: TableState, totalTiles: Int, targetSize: Int): Pair<List<SwapTarget>, Int> {
+    private fun analyzeSwap(hand: Hand, tableState: TableState, totalTiles: Int, targetSize: Int, wildcard: TileType?): Pair<List<SwapTarget>, Int> {
         val depth = AnalysisSettings.swapDepth.coerceIn(1, AnalysisSettings.MAX_DEPTH)
-        val targets = FanReverseAnalyzer.analyze(hand, tableState)
+        val targets = FanReverseAnalyzer.analyze(hand, tableState, wildcard)
         val mapped = targets.map { t -> SwapTarget(t.fanRule, t.totalProbability,
             t.swapPaths.map { sp -> SwapPath(sp.discardTiles, sp.drawTiles, sp.remainingCount, sp.probability, sp.resultingWaits, sp.swapCount) }) }
         return mapped to depth
     }
 
-    private fun groupByFans(hand: Hand, improvements: List<ImprovementPath>): List<FanTarget> {
+    private fun groupByFans(hand: Hand, improvements: List<ImprovementPath>, wildcard: TileType? = null): List<FanTarget> {
         val fanMap = mutableMapOf<String, MutableList<ImprovementTile>>()
         for (imp in improvements) {
             for (wait in imp.resultingWaits) {
                 val winHand = hand.withConcealed((hand.concealed + imp.drawTile + wait).sorted())
                 if (!winHand.isValidWinSize()) continue
-                val decomps = WinChecker.getAllDecompositions(winHand)
+                val decomps = WinChecker.getAllDecompositions(winHand, wildcard)
                 if (decomps.isEmpty()) continue
-                val result = FanScorer.score(FanContext(decomps.first(), winHand, WinInfo(wait)))
+                val result = FanScorer.score(FanContext.of(decomps.first(), winHand, WinInfo(wait), wildcard))
                 for (rule in result.allDetected) {
                     fanMap.getOrPut(rule.id) { mutableListOf() }
                         .add(ImprovementTile(imp.drawTile, imp.remainingCount, imp.probability, imp.resultingWaits))

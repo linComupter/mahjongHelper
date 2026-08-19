@@ -28,7 +28,13 @@ object FanScorer {
     private const val MINIMUM_FAN = 1
 
     fun score(ctx: FanContext): FanResult {
-        val detected = FanRegistry.detectAll(ctx)
+        val detected = FanRegistry.detectAll(ctx).toMutableList()
+
+        // 门清为附加番：仅在同时满足至少一种其他番型时计入（单独门清不计）
+        if (detected.singleOrNull()?.id == Menzen.id) {
+            detected.clear()
+        }
+
         val detectedIds = detected.map { it.id }.toSet()
 
         // 被任一高番 subsumes 的番种标记为不计
@@ -41,6 +47,8 @@ object FanScorer {
         val counted = detected.filter { it.id !in subsumedIds }
         val subsumed = detected.filter { it.id in subsumedIds }
         val total = counted.sumOf { FanSettingsStore.getValue(it) }
-        return FanResult(detected, counted, subsumed, total, total >= MINIMUM_FAN)
+        // 赖子模式：满足平胡即可和牌，无需番数达标（0 番也可起和）
+        val meetsMinimum = ctx.wildcard != null || total >= MINIMUM_FAN
+        return FanResult(detected, counted, subsumed, total, meetsMinimum)
     }
 }

@@ -1,8 +1,12 @@
 package com.mahjong.guobiao
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +18,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,17 +27,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import com.mahjong.guobiao.engine.AnalysisMode
 import com.mahjong.guobiao.engine.AnalysisSettings
 import com.mahjong.guobiao.engine.DevelopmentAnalyzer
 import com.mahjong.guobiao.engine.fan.FanRegistry
@@ -43,12 +52,18 @@ import com.mahjong.guobiao.model.TileType
 import com.mahjong.guobiao.ui.FanTargetUi
 import com.mahjong.guobiao.ui.MahjongViewModel
 import com.mahjong.guobiao.ui.SwapTargetUi
+import com.mahjong.guobiao.ui.DiscardSuggestionUi
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: MahjongViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 显式管理 edge-to-edge：浅色背景 → 深色状态栏图标，避免与背景同化
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         val vm: MahjongViewModel by viewModels()
         viewModel = vm
         viewModel.loadSettings(this)
@@ -70,6 +85,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MahjongApp(vm: MahjongViewModel) {
     var selectedTab by remember { mutableStateOf(0) }
+    val context = LocalContext.current
+    val state by vm.state.collectAsState()
+    LaunchedEffect(Unit) { vm.checkForUpdate(context) }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
@@ -81,7 +99,7 @@ fun MahjongApp(vm: MahjongViewModel) {
                     onClick = { selectedTab = 0 }
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    icon = { Icon(Icons.Default.Star, contentDescription = null) },
                     label = { Text("番数规则") },
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 }
@@ -98,13 +116,44 @@ fun MahjongApp(vm: MahjongViewModel) {
         when (selectedTab) {
             0 -> AnalysisScreen(vm, Modifier.padding(innerPadding))
             1 -> FanSettingsScreen(Modifier.padding(innerPadding))
-            2 -> AnalysisSettingsScreen(Modifier.padding(innerPadding))
+            2 -> AnalysisSettingsScreen(vm, Modifier.padding(innerPadding))
         }
+    }
+
+    // 版本更新弹窗：GitHub Releases 检测到新版本时提示，跳浏览器打开 Release 页
+    state.updateAvailable?.let { update ->
+        val currentVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        }.getOrDefault("")
+        AlertDialog(
+            onDismissRequest = { vm.dismissUpdate() },
+            title = { Text("发现新版本") },
+            text = {
+                Column {
+                    Text("最新版本: v${update.latestVersion}", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("当前版本: v${currentVersion.ifBlank { "未知" }}", fontSize = 13.sp, color = Color.Gray)
+                    Spacer(Modifier.height(4.dp))
+                    Text("已发布新版本，点击下方按钮前往查看更新内容与下载方式。", fontSize = 13.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.latestReleaseUrl)))
+                    }
+                    vm.dismissUpdate()
+                }) { Text("去更新") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissUpdate() }) { Text("稍后") }
+            }
+        )
     }
 }
 
 // ── 手牌分析页 ──
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
     val state by vm.state.collectAsState()
@@ -152,7 +201,7 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
         SectionHeader("点牌加入手牌 / 记入牌河 / 创建副露")
         var pickerMode by remember { mutableStateOf(PickerMode.HAND) }
         var meldKind by remember { mutableStateOf<MeldType?>(null) }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             FilterChip(selected = pickerMode == PickerMode.HAND, onClick = { pickerMode = PickerMode.HAND; meldKind = null }, label = { Text("加入手牌") })
             FilterChip(selected = pickerMode == PickerMode.DISCARD, onClick = { pickerMode = PickerMode.DISCARD; meldKind = null }, label = { Text("记入牌河") })
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.PON, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.PON }, label = { Text("碰") })
@@ -161,9 +210,18 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_CLOSED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_CLOSED }, label = { Text("暗杠") })
             FilterChip(selected = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED, onClick = { pickerMode = PickerMode.MELD; meldKind = MeldType.KAN_ADDED }, label = { Text("加杠") })
         }
+        // 加杠模式：仅已存在碰副露的牌可点选，其他牌不可点击
+        val isKanMode = pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED
+        val kanTargets = remember(state.melds) {
+            state.melds.filter { it.type == MeldType.PON }.map { it.tiles.first() }.toSet()
+        }
         TilePickerGrid(
             onPick = { tile ->
                 when {
+                    pickerMode == PickerMode.MELD && meldKind == MeldType.KAN_ADDED -> {
+                        vm.addKanToPon(tile)
+                        meldKind = null; pickerMode = PickerMode.HAND
+                    }
                     pickerMode == PickerMode.MELD && meldKind != null -> {
                         vm.addMeld(meldKind!!, tile)
                         meldKind = null; pickerMode = PickerMode.HAND
@@ -172,7 +230,8 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     pickerMode == PickerMode.DISCARD -> vm.addDiscard(tile)
                 }
             },
-            remaining = { tile -> 4 - state.concealed.count { it == tile } - state.melds.flatMap { m -> m.tiles }.count { it == tile } - state.discards.count { it == tile } }
+            remaining = { tile -> 4 - state.concealed.count { it == tile } - state.melds.flatMap { m -> m.tiles }.count { it == tile } - state.discards.count { it == tile } },
+            enabled = { tile -> !isKanMode || tile in kanTargets }
         )
 
         Spacer(Modifier.height(8.dp))
@@ -211,6 +270,38 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                     Text("${wt.tile}  剩余 ${wt.remainingCount} 张", fontSize = 15.sp)
                     Text(wt.possibleFanNames.joinToString(" "), fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 }
+            }
+        } else if (state.discardSuggestions.isNotEmpty()) {
+            SectionHeader("弃牌建议（14张未和牌，点选查看详情）")
+            var detailDiscard by remember { mutableStateOf<DiscardSuggestionUi?>(null) }
+            state.discardSuggestions.forEach { ds ->
+                val waitStr = if (ds.waits.isNotEmpty()) ds.waits.joinToString("") { it.toString() } else "不听"
+                Surface(
+                    onClick = { detailDiscard = ds },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    color = if (ds.reachesMinimum) Color(0xFFE8F5E9) else Color(0xFFF0F4F8),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("弃 ${ds.discardTile} -> 听 $waitStr（${ds.waitCount}张）", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(if (ds.reachesMinimum) "可起和" else "", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+            detailDiscard?.let { ds ->
+                AlertDialog(
+                    onDismissRequest = { detailDiscard = null },
+                    title = { Text("弃 ${ds.discardTile}") },
+                    text = {
+                        Column {
+                            Text("听牌: ${if (ds.waits.isNotEmpty()) ds.waits.joinToString("") { it.toString() } else "无"}（${ds.waitCount}张）", fontSize = 13.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text("可达番种: ${if (ds.possibleFanNames.isNotEmpty()) ds.possibleFanNames.joinToString(" ") else "无"}", fontSize = 13.sp)
+                            Text(if (ds.reachesMinimum) "✓ 可 1 番起和" else "暂无法 1 番起和", fontSize = 13.sp, color = if (ds.reachesMinimum) MaterialTheme.colorScheme.primary else Color.Gray)
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { detailDiscard = null }) { Text("关闭") } }
+                )
             }
         } else if (state.swapTargets.isNotEmpty()) {
             val label = if (state.isTenpaiNoFan) "已听牌但无法1番起和 — 点选牌型查看可替换的牌" else "弃一张摸一张可发展的牌型（点击查看详情）"
@@ -295,6 +386,16 @@ fun AnalysisScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
                 )
             }
         }
+    }
+
+    // 操作校验错误弹窗（碰/吃/明杠/暗杠/加杠/上限）
+    state.errorMessage?.let { err ->
+        AlertDialog(
+            onDismissRequest = { vm.clearError() },
+            title = { Text("提示") },
+            text = { Text(err) },
+            confirmButton = { TextButton(onClick = { vm.clearError() }) { Text("确定") } }
+        )
     }
 }
 
@@ -428,36 +529,60 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun HandRow(tiles: List<TileType>, onRemove: (Int) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        items(tiles) { tile -> TileView(tile, onClick = { onRemove(tiles.indexOf(tile)) }) }
+    // 固定高度（2行+间距），避免0张->1张时布局跳动；chunked分行避免横向滚动
+    Column(
+        modifier = Modifier.heightIn(min = 36.dp * 2 + 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        tiles.chunked(9).forEach { rowTiles ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                rowTiles.forEach { tile ->
+                    TileView(tile, onClick = { onRemove(tiles.indexOf(tile)) })
+                }
+            }
+        }
     }
 }
 
 @Composable
-fun TilePickerGrid(onPick: (TileType) -> Unit, remaining: (TileType) -> Int = { 0 }) {
+fun TilePickerGrid(
+    onPick: (TileType) -> Unit,
+    remaining: (TileType) -> Int = { 0 },
+    enabled: (TileType) -> Boolean = { true }
+) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(9),
         modifier = Modifier.heightIn(max = 260.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        items(TileType.ALL_NON_FLOWER) { tile -> TileView(tile, remaining = remaining(tile), onClick = { onPick(tile) }) }
+        items(TileType.ALL_NON_FLOWER) { tile ->
+            TileView(tile, remaining = remaining(tile), enabled = enabled(tile), onClick = { onPick(tile) })
+        }
     }
 }
 
 @Composable
-fun TileView(tile: TileType, remaining: Int = -1, onClick: () -> Unit) {
+fun TileView(tile: TileType, remaining: Int = -1, enabled: Boolean = true, onClick: () -> Unit) {
     val bg = when {
+        !enabled -> Color(0xFFE0E0E0)
         remaining == 0 -> Color(0xFFE0E0E0)
         tile.isHonor -> Color(0xFFE8DCC8)
         tile.isTerminal -> Color(0xFFDCE8DC)
         else -> Color(0xFFF5F5F5)
     }
     Box(
-        modifier = Modifier.size(36.dp).background(bg, RoundedCornerShape(4.dp)).border(1.dp, Color.Gray, RoundedCornerShape(4.dp)).clickable(onClick = onClick),
+        modifier = Modifier
+            .size(36.dp)
+            .background(bg, RoundedCornerShape(4.dp))
+            .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
     ) {
-        Text(tile.toString(), fontSize = 13.sp, textAlign = TextAlign.Center, color = if (remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray)
+        Text(
+            tile.toString(), fontSize = 13.sp, textAlign = TextAlign.Center,
+            color = if (!enabled || remaining == 0) Color.LightGray else if (tile.isHonor) Color.Black else Color.DarkGray
+        )
         // 右上角剩余张数角标
         if (remaining >= 0) {
             Box(
@@ -517,14 +642,58 @@ fun DiscardRow(discards: List<TileType>, onRemove: (Int) -> Unit, onClear: () ->
 // ── 分析规则页 ──
 
 @Composable
-fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
+fun AnalysisSettingsScreen(vm: MahjongViewModel, modifier: Modifier = Modifier) {
     var depth by remember { mutableIntStateOf(AnalysisSettings.swapDepth) }
+    val context = LocalContext.current
 
     Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
         Text("分析规则", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp))
-        Text("调整替换式分析的模拟深度（弃N摸N）", fontSize = 13.sp, color = Color.Gray)
+
+        Spacer(Modifier.height(12.dp))
+
+        // ── 分析模式区域（模式/赖子牌改动即时生效并持久化，避免切换页面后回退）──
+        var mode by remember { mutableStateOf(AnalysisSettings.analysisMode) }
+        var wildcard by remember { mutableIntStateOf(AnalysisSettings.wildcardTileCode) }
+
+        Text("分析模式", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnalysisMode.entries.forEach { m ->
+                FilterChip(
+                    selected = mode == m,
+                    onClick = {
+                        mode = m
+                        AnalysisSettings.setAnalysisMode(m)
+                        vm.saveSettings(context)
+                    },
+                    label = { Text(m.displayName) }
+                )
+            }
+        }
+        Text(
+            "当前模式：${mode.displayName}，不同模式和牌规则不同",
+            fontSize = 12.sp,
+            color = Color.Gray
+        )
+
+        // 赖子模式下选择赖子牌（默认红中）
+        if (mode == AnalysisMode.WILD) {
+            Spacer(Modifier.height(8.dp))
+            Text("赖子牌（选中：${TileType(wildcard)}）", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(4.dp))
+            WildcardTileGrid(selected = wildcard, onSelect = { code ->
+                wildcard = code
+                AnalysisSettings.setWildcardTile(code)
+                vm.saveSettings(context)
+            })
+            Text("赖子牌可替代任意牌张参与和牌", fontSize = 12.sp, color = Color.Gray)
+        }
 
         Spacer(Modifier.height(16.dp))
+
+        Text("替换深度", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(4.dp))
+        Text("调整替换式分析的模拟深度（弃N摸N）", fontSize = 13.sp, color = Color.Gray)
 
         Text("替换深度：弃${depth}张 → 摸${depth}张", fontSize = 16.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(8.dp))
@@ -534,6 +703,10 @@ fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
             Slider(
                 value = depth.toFloat(),
                 onValueChange = { depth = it.roundToInt() },
+                onValueChangeFinished = {
+                    AnalysisSettings.setSwapDepth(depth)
+                    vm.saveSettings(context)
+                },
                 valueRange = 1f..AnalysisSettings.MAX_DEPTH.toFloat(),
                 steps = AnalysisSettings.MAX_DEPTH - 1,
                 modifier = Modifier.weight(1f)
@@ -553,7 +726,10 @@ fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(12.dp))
 
         Button(onClick = {
+            AnalysisSettings.setAnalysisMode(mode)
+            AnalysisSettings.setWildcardTile(wildcard)
             AnalysisSettings.setSwapDepth(depth)
+            vm.saveSettings(context)
         }) {
             Text("保存设置")
         }
@@ -570,3 +746,30 @@ fun AnalysisSettingsScreen(modifier: Modifier = Modifier) {
 }
 
 enum class PickerMode { HAND, DISCARD, MELD }
+
+/** 赖子牌单选网格：1-9万/条/筒 + 东南西北中发白，选中项高亮红框。 */
+@Composable
+fun WildcardTileGrid(selected: Int, onSelect: (Int) -> Unit) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(9),
+        modifier = Modifier.heightIn(max = 180.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        items(TileType.ALL_NON_FLOWER) { tile ->
+            val isSelected = tile.code == selected
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(Color.Transparent, RoundedCornerShape(4.dp))
+                    .then(
+                        if (isSelected) Modifier.border(2.dp, Color(0xFFEF5350), RoundedCornerShape(4.dp))
+                        else Modifier
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                TileView(tile, onClick = { onSelect(tile.code) })
+            }
+        }
+    }
+}

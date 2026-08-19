@@ -64,6 +64,21 @@ data class SwapTargetUi(
     val swapPaths: List<SwapPathUi>
 )
 
+/** 弃牌建议展示（14张未和牌时，弃某张后剩余13张的听牌情况）。 */
+data class DiscardSuggestionUi(
+    val discardTile: TileType,
+    val waits: List<TileType>,
+    val reachesMinimum: Boolean,
+    val possibleFanNames: List<String>,
+    val waitCount: Int
+)
+
+/** 版本更新提示（GitHub Releases 检测到新版本时）。 */
+data class UpdateAvailableUi(
+    val latestVersion: String,
+    val latestReleaseUrl: String
+)
+
 /** UI 状态。 */
 data class MahjongUiState(
     val concealed: List<TileType> = emptyList(),
@@ -80,14 +95,22 @@ data class MahjongUiState(
     val developmentPaths: List<DevelopmentPathUi> = emptyList(),
     val fanTargets: List<FanTargetUi> = emptyList(),
     val swapTargets: List<SwapTargetUi> = emptyList(),
+    val discardSuggestions: List<DiscardSuggestionUi> = emptyList(),
     val isTenpaiNoFan: Boolean = false,
     val totalRemaining: Int = 0,
-    val message: String = ""
+    val updateAvailable: UpdateAvailableUi? = null,
+    val message: String = "",
+    val errorMessage: String? = null
 )
 
 class MahjongViewModel : ViewModel() {
 
     private val engine = RulesEngine()
+
+    /** 版本检查间隔：24 小时一次，避免每次启动都请求 GitHub API。 */
+    private companion object {
+        const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
+    }
 
     private val _state = MutableStateFlow(MahjongUiState())
     val state: StateFlow<MahjongUiState> = _state.asStateFlow()
@@ -102,7 +125,7 @@ class MahjongViewModel : ViewModel() {
         val inMelds = current.melds.flatMap { m -> m.tiles }.count { it == tile }
         val inDiscards = current.discards.count { it == tile }
         if (inConcealed + inMelds + inDiscards >= 4) return
-        _state.value = current.copy(concealed = (current.concealed + tile).sorted(), message = "")
+        _state.value = current.copy(concealed = (current.concealed + tile).sorted(), message = "", errorMessage = null)
     }
 
     fun removeTileAt(index: Int) {
@@ -110,7 +133,7 @@ class MahjongViewModel : ViewModel() {
         if (index !in current.concealed.indices) return
         _state.value = current.copy(
             concealed = current.concealed.toMutableList().apply { removeAt(index) },
-            message = ""
+            message = "", errorMessage = null
         )
     }
 
@@ -121,7 +144,7 @@ class MahjongViewModel : ViewModel() {
         val inMelds = current.melds.flatMap { m -> m.tiles }.count { it == tile }
         val inDiscards = current.discards.count { it == tile }
         if (inConcealed + inMelds + inDiscards >= 4) return
-        _state.value = current.copy(discards = current.discards + tile, message = "")
+        _state.value = current.copy(discards = current.discards + tile, message = "", errorMessage = null)
     }
 
     fun removeDiscardAt(index: Int) {
@@ -129,16 +152,16 @@ class MahjongViewModel : ViewModel() {
         if (index !in current.discards.indices) return
         _state.value = current.copy(
             discards = current.discards.toMutableList().apply { removeAt(index) },
-            message = ""
+            message = "", errorMessage = null
         )
     }
 
     fun clearHand() {
-        _state.value = _state.value.copy(concealed = emptyList(), message = "")
+        _state.value = _state.value.copy(concealed = emptyList(), message = "", errorMessage = null)
     }
 
     fun clearDiscards() {
-        _state.value = _state.value.copy(discards = emptyList(), message = "")
+        _state.value = _state.value.copy(discards = emptyList(), message = "", errorMessage = null)
     }
 
     fun setWinMethod(method: WinMethod) {
@@ -171,23 +194,50 @@ class MahjongViewModel : ViewModel() {
             .apply()
     }
 
+    // ── 版本更新 ──
+
+    /** 启动时检查 GitHub Releases：每日最多一次，发现新版本写入 [MahjongUiState.updateAvailable]。 */
+    fun checkForUpdate(context: Context) {
+        val prefs = context.getSharedPreferences("fan_settings", Context.MODE_PRIVATE)
+        val lastCheck = prefs.getLong("update_last_check", 0L)
+        if (System.currentTimeMillis() - lastCheck < CHECK_INTERVAL_MS) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val latest = com.mahjong.guobiao.update.VersionChecker.fetchLatestRelease() ?: return@launch
+            val current = runCatching {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+            }.getOrDefault("")
+            prefs.edit().putLong("update_last_check", System.currentTimeMillis()).apply()
+            if (current.isNotEmpty() && com.mahjong.guobiao.update.VersionChecker.isNewer(latest.versionName, current)) {
+                _state.value = _state.value.copy(
+                    updateAvailable = UpdateAvailableUi(latest.versionName, latest.releaseUrl)
+                )
+            }
+        }
+    }
+
+    /** 关闭更新弹窗。 */
+    fun dismissUpdate() {
+        _state.value = _state.value.copy(updateAvailable = null)
+    }
+
     /** 分析当前手牌。 */
     fun analyze() {
         viewModelScope.launch(Dispatchers.Default) {
-            val s = _state.value
+            val s = _state.value.copy(discardSuggestions = emptyList())
             val hand = Hand(concealed = s.concealed, melds = s.melds)
             val tableState = buildTableState(s)
+            val wildcard = com.mahjong.guobiao.engine.AnalysisSettings.activeWildcard
 
             val size = hand.concealed.size
             val tenpaiSize = hand.concealedCountForTenpai()
             val winSize = hand.concealedCountForWin()
 
             // 和牌态
-            if (size == winSize && com.mahjong.guobiao.engine.win.WinChecker.isWin(hand)) {
+            if (size == winSize && com.mahjong.guobiao.engine.win.WinChecker.isWin(hand, wildcard)) {
                 val result = engine.fullAnalysis(hand, tableState, WinInfo(
                     winTile = s.concealed.lastOrNull() ?: TileType.EAST,
                     method = s.winMethod, selfSeat = s.selfSeat, prevailingWind = s.prevailingWind
-                ))
+                ), wildcard)
                 val best = result.fanResults.maxByOrNull { it.second.totalFan }
                 val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
                 _state.value = s.copy(
@@ -201,16 +251,38 @@ class MahjongViewModel : ViewModel() {
                 return@launch
             }
 
+            // winSize 未和牌 -> 弃牌建议（此时必然 !isWin，因 isWin 已 return）
+            if (size == winSize) {
+                val suggestions = DevelopmentAnalyzer.analyzeDiscard(hand, tableState, wildcard)
+                val ui = mapDiscardSuggestions(suggestions)
+                val hasReachable = ui.any { it.reachesMinimum }
+                val hasWaits = ui.any { it.waitCount > 0 }
+                val msg = when {
+                    hasReachable -> "弃牌建议 - 弃以下牌可进入听牌并能起和"
+                    hasWaits -> "弃牌建议 - 弃后可听牌但暂无法 1 番起和，可尝试增加分析深度"
+                    else -> "14 张未和牌，弃任意牌后均不听牌"
+                }
+                _state.value = s.copy(
+                    isWin = false, isTenpai = false,
+                    waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
+                    developmentPaths = emptyList(), fanTargets = emptyList(), swapTargets = emptyList(),
+                    discardSuggestions = ui, isTenpaiNoFan = false,
+                    totalRemaining = 0,
+                    message = msg
+                )
+                return@launch
+            }
+
             // 听牌态（无副露时13张，有副露时更少）
             if (size == tenpaiSize && hand.isValidTenpaiSize()) {
-                val waits = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand)
-                val hasValid = DevelopmentAnalyzer.hasValidTenpai(hand)
+                val waits = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand, wildcard = wildcard)
+                val hasValid = DevelopmentAnalyzer.hasValidTenpai(hand, wildcard)
                 if (hasValid) {
                     // 有效听牌 → 正常显示听牌
                     val result = engine.fullAnalysis(hand, tableState, WinInfo(
                         winTile = s.concealed.lastOrNull() ?: TileType.EAST,
                         method = s.winMethod, selfSeat = s.selfSeat, prevailingWind = s.prevailingWind
-                    ))
+                    ), wildcard)
                     val waitsUi = result.waitingTiles.map { wt ->
                         WaitingTileUi(wt.tile, wt.remainingCount,
                             wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" })
@@ -223,9 +295,9 @@ class MahjongViewModel : ViewModel() {
                     )
                 } else {
                     // 听牌但无有效番种 → swap 分析
-                    val dev = DevelopmentAnalyzer.analyze(hand, tableState)
+                    val dev = DevelopmentAnalyzer.analyze(hand, tableState, wildcard)
                     val swaps = mapSwapTargets(dev.swapTargets)
-                    val wtCount = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand).size
+                    val wtCount = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand, wildcard = wildcard).size
                     val msg = if (swaps.isEmpty())
                         "已听牌($wtCount 张)但无法起和，当前分析深度找不到发展方向，可尝试增加深度"
                     else "已听牌但无法起和 — 弃牌换牌可发展至："
@@ -241,7 +313,7 @@ class MahjongViewModel : ViewModel() {
 
             // 非听牌 → 替换式分析
             if (size in 1 until tenpaiSize) {
-                val dev = DevelopmentAnalyzer.analyze(hand, tableState)
+                val dev = DevelopmentAnalyzer.analyze(hand, tableState, wildcard)
                 val swaps = mapSwapTargets(dev.swapTargets)
                 val msg = if (swaps.isEmpty())
                     "${dev.currentShanten}向听，当前分析深度下未找到可发展的牌型方向，可尝试增加深度"
@@ -256,7 +328,13 @@ class MahjongViewModel : ViewModel() {
                 return@launch
             }
 
-            _state.value = s.copy(message = "暗手 ${size} 张，需 ${tenpaiSize}(听牌) 或 ${winSize}(和牌)")
+            _state.value = s.copy(
+                isWin = false, isTenpai = false,
+                waitingTiles = emptyList(), possibleFans = emptyList(), totalFan = 0,
+                developmentPaths = emptyList(), fanTargets = emptyList(), swapTargets = emptyList(),
+                isTenpaiNoFan = false, totalRemaining = 0,
+                message = "暗手 ${size} 张，需 ${tenpaiSize}(听牌) 或 ${winSize}(和牌)"
+            )
         }
     }
 
@@ -273,6 +351,17 @@ class MahjongViewModel : ViewModel() {
             )
         }
 
+    private fun mapDiscardSuggestions(suggestions: List<DevelopmentAnalyzer.DiscardSuggestion>): List<DiscardSuggestionUi> =
+        suggestions.map { ds ->
+            DiscardSuggestionUi(
+                discardTile = ds.discardTile,
+                waits = ds.resultingWaits,
+                reachesMinimum = ds.reachesMinimum,
+                possibleFanNames = ds.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" },
+                waitCount = ds.waitCount
+            )
+        }
+
     // ── 副露管理 ──
 
     fun addMeld(type: MeldType, tile: TileType) {
@@ -282,25 +371,73 @@ class MahjongViewModel : ViewModel() {
             MeldType.CHI -> Meld.chi(tile)
             MeldType.KAN_OPEN -> Meld.kanOpen(tile)
             MeldType.KAN_CLOSED -> Meld.kanClosed(tile)
-            MeldType.KAN_ADDED -> Meld.kanAdded(tile)
-            else -> return
+            else -> return  // 加杠走 addKanToPon
         }
-        // 4张上限校验
+        // 剩余张数判定：碰需≥3张、吃每张需≥1张、明杠需≥4张、暗杠需=4张
         for (t in meld.tiles) {
-            val total = current.concealed.count { it == t } +
-                    current.melds.flatMap { m -> m.tiles }.count { it == t } +
-                    current.discards.count { it == t }
-            if (total + 1 > 4) return
+            val remaining = 4 - usedCount(current, t)
+            val ok = when (type) {
+                MeldType.PON -> remaining >= 3
+                MeldType.CHI -> remaining >= 1
+                MeldType.KAN_OPEN -> remaining >= 4
+                MeldType.KAN_CLOSED -> remaining == 4
+                else -> true
+            }
+            if (!ok) {
+                val msg = when (type) {
+                    MeldType.PON -> "剩余牌数不满足碰牌条件"
+                    MeldType.CHI -> "剩余牌数不满足吃牌条件"
+                    MeldType.KAN_OPEN -> "剩余牌数不满足明杠条件"
+                    MeldType.KAN_CLOSED -> "剩余牌数不满足暗杠条件"
+                    else -> "剩余牌数不足"
+                }
+                _state.value = current.copy(errorMessage = msg)
+                return
+            }
         }
-        _state.value = current.copy(melds = current.melds + meld, message = "")
+        // 手牌+副露不能超过14张（杠按3张计算）
+        if (current.concealed.size + 3 * (current.melds.size + 1) > 14) {
+            _state.value = current.copy(errorMessage = "当前操作超出手牌数上限")
+            return
+        }
+        _state.value = current.copy(melds = current.melds + meld, message = "", errorMessage = null)
     }
+
+    /** 加杠：仅当存在对应碰副露时，把该碰改为加杠。 */
+    fun addKanToPon(tile: TileType) {
+        val current = _state.value
+        val idx = current.melds.indexOfFirst { it.type == MeldType.PON && it.tiles.first() == tile }
+        if (idx < 0) {
+            _state.value = current.copy(errorMessage = "没有对应的碰副露，无法加杠")
+            return
+        }
+        // 第4张可用判定：碰副露之外的同牌副本不得出现在牌河或其他副露中
+        val outsideUsed = current.melds.flatMap { m -> m.tiles }.count { it == tile } +
+                current.discards.count { it == tile }
+        if (4 - outsideUsed < 1) {
+            _state.value = current.copy(errorMessage = "剩余牌数不满足加杠条件")
+            return
+        }
+        val newMelds = current.melds.toMutableList()
+        newMelds[idx] = Meld.kanAdded(tile)
+        _state.value = current.copy(melds = newMelds, message = "", errorMessage = null)
+    }
+
+    fun clearError() {
+        _state.value = _state.value.copy(errorMessage = null)
+    }
+
+    private fun usedCount(s: MahjongUiState, tile: TileType): Int =
+        s.concealed.count { it == tile } +
+                s.melds.flatMap { m -> m.tiles }.count { it == tile } +
+                s.discards.count { it == tile }
 
     fun removeMeld(index: Int) {
         val current = _state.value
         if (index !in current.melds.indices) return
         _state.value = current.copy(
             melds = current.melds.toMutableList().apply { removeAt(index) },
-            message = ""
+            message = "", errorMessage = null
         )
     }
 

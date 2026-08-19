@@ -20,6 +20,13 @@ object AllTriplets : FanRule {
         ctx.decomposition.type == DecompositionType.STANDARD && ctx.decomposition.melds.filter { !it.isPair }.all { it.isTriplet }
 }
 
+object Menzen : FanRule {
+    override val id = "menzen"; override val name = "门清"; override val value = 3
+    /** 门清：无副露，或副露全为暗杠。是否计入总分由 FanScorer 依"同时满足其他番型"判定。 */
+    override fun detect(ctx: FanContext): Boolean =
+        ctx.hand.melds.all { it.type == MeldType.KAN_CLOSED }
+}
+
 // endregion
 
 // region 4番
