@@ -12,7 +12,7 @@ Android app that analyzes a mahjong hand against Chinese Official (国标) rules
 - **Language**: Kotlin 1.9.22
 - **Build**: Gradle 8.11.1, AGP 8.7.2, JDK 17
 - **Android SDK**: `E:\AndroidStudioSDK` (configured in `local.properties`)
-- **Engine tests**: JUnit 5 (101 tests, pure JVM — no Android device needed)
+- **Engine tests**: JUnit 5 (116 tests, pure JVM — no Android device needed)
 - **Git**: `https://github.com/linComupter/mahjongHelper.git` (origin)
 
 ## Project Structure
@@ -49,9 +49,9 @@ v4/
 │       │   │   └── TileCounter.kt   # Remaining = 4 − visible (hand+melds+river)
 │       │   ├── DevelopmentAnalyzer.kt   # Shanten + improvement-path analysis
 │       │   ├── FanReverseAnalyzer.kt     # Fan-type reverse analysis engine
-│       │   ├── AnalysisSettings.kt  # Swap depth + persistence for analysis settings
+│       │   ├── AnalysisSettings.kt  # Analysis mode (纯大/赖子) + swap depth + persistence
 │       │   └── RulesEngine.kt       # Top-level API
-│       └── test/                    # JUnit tests (101 total)
+│       └── test/                    # JUnit tests (116 total)
 ├── app/                             # Android app module
 │   └── src/main/java/com/mahjong/guobiao/
 │       ├── MainActivity.kt         # Compose UI: bottom nav (手牌分析 / 番数规则 / 分析规则), tile picker, results, edge-to-edge
@@ -114,10 +114,12 @@ DFS backtracking with "lowest-first" strategy: at each step, the tile with the s
 
 ### Analysis Settings
 `AnalysisSettings` (singleton, engine layer):
+- `analysisMode`: 分析模式（`AnalysisMode` enum：`PURE` 纯大模式 / `WILD` 赖子模式，UI 均可选；赖子模式引擎规则已实现：引擎接口带 `wildcard: TileType?` 参数，ViewModel 传 `AnalysisSettings.activeWildcard`）
+- `wildcardTileCode`: 赖子牌编码（0..33，默认 31=红中），仅赖子模式生效
 - `swapDepth`: 1~3，控制替换式分析的弃摸张数
-- `toProperties()` / `loadFromProperties(text)`: 序列化持久化
+- `toProperties()` / `loadFromProperties(text)`: 序列化持久化（每行一个 key=value：`mode`、`wildcard`、`swapDepth`；缺失键保持当前值）
 - 与 FanSettings 共用 SharedPreferences key `fan_settings`
-- UI: "分析规则" tab 提供 Slider 调节深度 + 性能提示
+- UI: "分析规则" tab 顶部为分析模式区域（FilterChip 选择模式；选赖子模式时下方出现赖子牌单选网格 `WildcardTileGrid`，选中红框高亮，默认红中）+ Slider 调节深度 + 性能提示；模式/赖子牌改动即时写入单例并持久化（切换页面/重启不回退），深度经滑块松手即时生效，"保存设置"按钮可统一写入并持久化全部三项
 
 ### Fan Scoring
 22 种番种，番数范围 3~24：
@@ -148,6 +150,12 @@ Each `FanRule` has: `value` (default fan points), `subsumes` (Set of fan IDs tha
 - Fan settings page: two modes — tap to edit value, or "编辑隐藏" mode to toggle hidden state (hidden → filtered from `FanRegistry.detectAll`)
 - Hidden rules: grayed out in list, excluded from analysis scoring. Overrides: orange highlight. Both persisted.
 
+### Version Update (app layer)
+`update/VersionChecker.kt` (app module, `java.net.HttpURLConnection` + `org.json` — no extra deps):
+- `fetchLatestRelease()`: `GET https://api.github.com/repos/linComupter/mahjongHelper/releases/latest`（需 `User-Agent` 头，否则 403）→ 解析 `tag_name`/`html_url`；非 200 / 无网 / 解析失败返回 null 不抛异常。
+- `compare(a, b)` / `isNewer(a, b)`: semver 比较（去除 `v` 前缀，非数字段按 0）。
+- 流程：`MahjongViewModel.checkForUpdate(context)` 在 `MahjongApp` 的 `LaunchedEffect` 启动时调用，本地 `versionName`（PackageManager）与 `tag_name` 比较；新 → `MahjongUiState.updateAvailable` → `MainActivity` AlertDialog → 去更新 `ACTION_VIEW` 浏览器打开 Release 页。每日最多一次（pref `update_last_check`）。纯提示式，不做下载/安装。
+
 ## Known Limitations (MVP)
 
 - **全不靠/七星不靠**: Disabled in `AllNonAdjacentChecker` — the precise definition needs official rulebook verification.
@@ -166,7 +174,7 @@ Each `FanRule` has: `value` (default fan points), `subsumes` (Set of fan IDs tha
 - **`subsumes` as static Set per FanRule**: Declarative, no runtime transitive-closure computation needed.
 - **AllNonAdjacentChecker disabled rather than partially-correct**: False positives in tenpai damage the core use case more than false negatives for rare patterns.
 - **TileParser for tests**: Readable string notation ("1112345678999m5m") makes test cases self-documenting. Parser uses 'm'/'p'/'s' input notation independently of `toString()` Chinese output.
-- **Bottom navigation**: Three tabs (手牌分析 / 番数规则 / 分析规则) via `Scaffold` + `NavigationBar`. Simple state-based switching (no NavHost), since only 3 screens.
+- **Bottom navigation**: Three tabs (手牌分析 Home / 番数规则 Star / 分析规则 Settings) via `Scaffold` + `NavigationBar`. Simple state-based switching (no NavHost), since only 3 screens. Icons use the core material-icons set (no `-extended` dependency).
 - **4-copy limit enforced in ViewModel**: `addTile()` and `addDiscard()` both check hand+melds+discards ≤ 4 per tile type.
 - **Click-to-remove**: Both hand tiles and discard tiles are clickable for removal. Clear-all buttons for each.
 - **Fan overrides persisted via SharedPreferences**: `FanSettingsStore.toProperties()` serializes to text; ViewModel saves on `onStop`, loads on `onCreate`.

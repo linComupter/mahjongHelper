@@ -47,6 +47,8 @@ object FanScorer {
         val counted = detected.filter { it.id !in subsumedIds }
         val subsumed = detected.filter { it.id in subsumedIds }
         val total = counted.sumOf { FanSettingsStore.getValue(it) }
-        return FanResult(detected, counted, subsumed, total, total >= MINIMUM_FAN)
+        // 赖子模式：满足平胡即可和牌，无需番数达标（0 番也可起和）
+        val meetsMinimum = ctx.wildcard != null || total >= MINIMUM_FAN
+        return FanResult(detected, counted, subsumed, total, meetsMinimum)
     }
 }

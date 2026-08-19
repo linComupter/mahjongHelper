@@ -73,6 +73,12 @@ data class DiscardSuggestionUi(
     val waitCount: Int
 )
 
+/** 版本更新提示（GitHub Releases 检测到新版本时）。 */
+data class UpdateAvailableUi(
+    val latestVersion: String,
+    val latestReleaseUrl: String
+)
+
 /** UI 状态。 */
 data class MahjongUiState(
     val concealed: List<TileType> = emptyList(),
@@ -92,6 +98,7 @@ data class MahjongUiState(
     val discardSuggestions: List<DiscardSuggestionUi> = emptyList(),
     val isTenpaiNoFan: Boolean = false,
     val totalRemaining: Int = 0,
+    val updateAvailable: UpdateAvailableUi? = null,
     val message: String = "",
     val errorMessage: String? = null
 )
@@ -99,6 +106,11 @@ data class MahjongUiState(
 class MahjongViewModel : ViewModel() {
 
     private val engine = RulesEngine()
+
+    /** 版本检查间隔：24 小时一次，避免每次启动都请求 GitHub API。 */
+    private companion object {
+        const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
+    }
 
     private val _state = MutableStateFlow(MahjongUiState())
     val state: StateFlow<MahjongUiState> = _state.asStateFlow()
@@ -182,23 +194,50 @@ class MahjongViewModel : ViewModel() {
             .apply()
     }
 
+    // ── 版本更新 ──
+
+    /** 启动时检查 GitHub Releases：每日最多一次，发现新版本写入 [MahjongUiState.updateAvailable]。 */
+    fun checkForUpdate(context: Context) {
+        val prefs = context.getSharedPreferences("fan_settings", Context.MODE_PRIVATE)
+        val lastCheck = prefs.getLong("update_last_check", 0L)
+        if (System.currentTimeMillis() - lastCheck < CHECK_INTERVAL_MS) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val latest = com.mahjong.guobiao.update.VersionChecker.fetchLatestRelease() ?: return@launch
+            val current = runCatching {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+            }.getOrDefault("")
+            prefs.edit().putLong("update_last_check", System.currentTimeMillis()).apply()
+            if (current.isNotEmpty() && com.mahjong.guobiao.update.VersionChecker.isNewer(latest.versionName, current)) {
+                _state.value = _state.value.copy(
+                    updateAvailable = UpdateAvailableUi(latest.versionName, latest.releaseUrl)
+                )
+            }
+        }
+    }
+
+    /** 关闭更新弹窗。 */
+    fun dismissUpdate() {
+        _state.value = _state.value.copy(updateAvailable = null)
+    }
+
     /** 分析当前手牌。 */
     fun analyze() {
         viewModelScope.launch(Dispatchers.Default) {
             val s = _state.value.copy(discardSuggestions = emptyList())
             val hand = Hand(concealed = s.concealed, melds = s.melds)
             val tableState = buildTableState(s)
+            val wildcard = com.mahjong.guobiao.engine.AnalysisSettings.activeWildcard
 
             val size = hand.concealed.size
             val tenpaiSize = hand.concealedCountForTenpai()
             val winSize = hand.concealedCountForWin()
 
             // 和牌态
-            if (size == winSize && com.mahjong.guobiao.engine.win.WinChecker.isWin(hand)) {
+            if (size == winSize && com.mahjong.guobiao.engine.win.WinChecker.isWin(hand, wildcard)) {
                 val result = engine.fullAnalysis(hand, tableState, WinInfo(
                     winTile = s.concealed.lastOrNull() ?: TileType.EAST,
                     method = s.winMethod, selfSeat = s.selfSeat, prevailingWind = s.prevailingWind
-                ))
+                ), wildcard)
                 val best = result.fanResults.maxByOrNull { it.second.totalFan }
                 val fans = best?.second?.counted?.map { "${it.name}(${FanSettingsStore.getValue(it)})" } ?: emptyList()
                 _state.value = s.copy(
@@ -214,7 +253,7 @@ class MahjongViewModel : ViewModel() {
 
             // winSize 未和牌 -> 弃牌建议（此时必然 !isWin，因 isWin 已 return）
             if (size == winSize) {
-                val suggestions = DevelopmentAnalyzer.analyzeDiscard(hand, tableState)
+                val suggestions = DevelopmentAnalyzer.analyzeDiscard(hand, tableState, wildcard)
                 val ui = mapDiscardSuggestions(suggestions)
                 val hasReachable = ui.any { it.reachesMinimum }
                 val hasWaits = ui.any { it.waitCount > 0 }
@@ -236,14 +275,14 @@ class MahjongViewModel : ViewModel() {
 
             // 听牌态（无副露时13张，有副露时更少）
             if (size == tenpaiSize && hand.isValidTenpaiSize()) {
-                val waits = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand)
-                val hasValid = DevelopmentAnalyzer.hasValidTenpai(hand)
+                val waits = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand, wildcard = wildcard)
+                val hasValid = DevelopmentAnalyzer.hasValidTenpai(hand, wildcard)
                 if (hasValid) {
                     // 有效听牌 → 正常显示听牌
                     val result = engine.fullAnalysis(hand, tableState, WinInfo(
                         winTile = s.concealed.lastOrNull() ?: TileType.EAST,
                         method = s.winMethod, selfSeat = s.selfSeat, prevailingWind = s.prevailingWind
-                    ))
+                    ), wildcard)
                     val waitsUi = result.waitingTiles.map { wt ->
                         WaitingTileUi(wt.tile, wt.remainingCount,
                             wt.possibleFans.map { "${it.name}(${FanSettingsStore.getValue(it)})" })
@@ -256,9 +295,9 @@ class MahjongViewModel : ViewModel() {
                     )
                 } else {
                     // 听牌但无有效番种 → swap 分析
-                    val dev = DevelopmentAnalyzer.analyze(hand, tableState)
+                    val dev = DevelopmentAnalyzer.analyze(hand, tableState, wildcard)
                     val swaps = mapSwapTargets(dev.swapTargets)
-                    val wtCount = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand).size
+                    val wtCount = com.mahjong.guobiao.engine.tenpai.TenpaiCalculator.waitingTiles(hand, wildcard = wildcard).size
                     val msg = if (swaps.isEmpty())
                         "已听牌($wtCount 张)但无法起和，当前分析深度找不到发展方向，可尝试增加深度"
                     else "已听牌但无法起和 — 弃牌换牌可发展至："
@@ -274,7 +313,7 @@ class MahjongViewModel : ViewModel() {
 
             // 非听牌 → 替换式分析
             if (size in 1 until tenpaiSize) {
-                val dev = DevelopmentAnalyzer.analyze(hand, tableState)
+                val dev = DevelopmentAnalyzer.analyze(hand, tableState, wildcard)
                 val swaps = mapSwapTargets(dev.swapTargets)
                 val msg = if (swaps.isEmpty())
                     "${dev.currentShanten}向听，当前分析深度下未找到可发展的牌型方向，可尝试增加深度"

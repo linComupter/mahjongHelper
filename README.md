@@ -61,7 +61,7 @@ v4/
 │   ├── engine/counter/             # 剩余张数统计
 │   ├── engine/DevelopmentAnalyzer  # 发展分析（含 14 张弃牌建议）
 │   ├── engine/FanReverseAnalyzer   # 番种倒推分析引擎
-│   └── test/                       # JUnit 单测（101 个）
+│   └── test/                       # JUnit 单测（116 个）
 ├── app/                            # Android Compose UI
 │   └── src/main/java/com/mahjong/guobiao/
 │       ├── MainActivity.kt         # 底部导航：手牌分析 / 番数规则 / 分析规则

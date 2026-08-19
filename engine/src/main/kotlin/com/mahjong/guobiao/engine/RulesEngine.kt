@@ -31,23 +31,24 @@ class RulesEngine {
      * - 听牌态（13张）：返回各听牌各分解可达番种的并集。
      *
      * @param winInfo 和牌信息（和牌方式/圈风门风）；听牌态时可省略，仅分析牌型结构。
+     * @param wildcard 赖子牌（赖子模式）；null 为纯大模式。
      * @return 所有可达番种（已去重）。
      */
-    fun listPossibleFans(hand: Hand, winInfo: WinInfo? = null): List<FanRule> {
+    fun listPossibleFans(hand: Hand, winInfo: WinInfo? = null, wildcard: TileType? = null): List<FanRule> {
         return if (hand.isValidWinSize()) {
             // 和牌态
             val info = winInfo ?: WinInfo(hand.concealed.last())
-            val decomps = WinChecker.getAllDecompositions(hand)
+            val decomps = WinChecker.getAllDecompositions(hand, wildcard)
             decomps.flatMap { decomp ->
-                FanScorer.score(FanContext(decomp, hand, info)).allDetected
+                FanScorer.score(FanContext.of(decomp, hand, info, wildcard)).allDetected
             }.distinctBy { it.id }
         } else if (hand.isValidTenpaiSize()) {
             // 听牌态：各听牌各分解的番种并集
-            val waits = TenpaiCalculator.calculate(hand)
+            val waits = TenpaiCalculator.calculate(hand, wildcard = wildcard)
             waits.flatMap { wt -> wt.decompositions.flatMap { decomp ->
                 val testHand = hand.withConcealed(hand.concealed + wt.tile)
                 val info = winInfo?.copy(winTile = wt.tile) ?: WinInfo(wt.tile)
-                FanScorer.score(FanContext(decomp, testHand, info)).allDetected
+                FanScorer.score(FanContext.of(decomp, testHand, info, wildcard)).allDetected
             } }.distinctBy { it.id }
         } else {
             emptyList()
@@ -55,30 +56,31 @@ class RulesEngine {
     }
 
     /** 和牌态的详细番种计分结果（各分解）。 */
-    fun scoreHand(hand: Hand, winInfo: WinInfo? = null): List<Pair<Decomposition, FanResult>> {
+    fun scoreHand(hand: Hand, winInfo: WinInfo? = null, wildcard: TileType? = null): List<Pair<Decomposition, FanResult>> {
         if (!hand.isValidWinSize()) return emptyList()
         val info = winInfo ?: WinInfo(hand.concealed.last())
-        return WinChecker.getAllDecompositions(hand).map { decomp ->
-            decomp to FanScorer.score(FanContext(decomp, hand, info))
+        return WinChecker.getAllDecompositions(hand, wildcard).map { decomp ->
+            decomp to FanScorer.score(FanContext.of(decomp, hand, info, wildcard))
         }
     }
 
     /** 最优分解的番种结果。 */
-    fun bestScore(hand: Hand, winInfo: WinInfo? = null): FanResult? =
-        scoreHand(hand, winInfo).maxByOrNull { it.second.totalFan }?.second
+    fun bestScore(hand: Hand, winInfo: WinInfo? = null, wildcard: TileType? = null): FanResult? =
+        scoreHand(hand, winInfo, wildcard).maxByOrNull { it.second.totalFan }?.second
 
     // endregion
 
     // region 需求2：听牌
 
     /** 计算听牌（不含剩余张数）。 */
-    fun calculateTenpai(hand: Hand): List<TenpaiCalculator.WaitingTile> {
+    fun calculateTenpai(hand: Hand, wildcard: TileType? = null): List<TenpaiCalculator.WaitingTile> {
         require(hand.isValidTenpaiSize()) { "听牌需暗手 ${hand.concealedCountForTenpai()} 张，实际 ${hand.concealed.size}" }
-        return TenpaiCalculator.calculate(hand)
+        return TenpaiCalculator.calculate(hand, wildcard = wildcard)
     }
 
     /** 听牌牌型列表。 */
-    fun waitingTiles(hand: Hand): List<TileType> = calculateTenpai(hand).map { it.tile }
+    fun waitingTiles(hand: Hand, wildcard: TileType? = null): List<TileType> =
+        calculateTenpai(hand, wildcard).map { it.tile }
 
     // endregion
 
@@ -87,10 +89,12 @@ class RulesEngine {
     /**
      * 计算听牌及每张听牌的剩余张数。
      * @param tableState 场况（各家牌河+副露+花），用于剩余张数与剪枝
+     * @param wildcard 赖子牌（赖子模式）；null 为纯大模式。
      */
     fun calculateTenpaiWithCounts(
         hand: Hand,
-        tableState: TableState
+        tableState: TableState,
+        wildcard: TileType? = null
     ): List<WaitingTileWithCount> {
         require(hand.isValidTenpaiSize()) { "听牌需暗手 ${hand.concealedCountForTenpai()} 张，实际 ${hand.concealed.size}" }
 
@@ -104,7 +108,7 @@ class RulesEngine {
             }
         }
 
-        val waits = TenpaiCalculator.calculate(hand, otherUsed)
+        val waits = TenpaiCalculator.calculate(hand, otherUsed, wildcard)
         return waits.map { wt ->
             WaitingTileWithCount(
                 tile = wt.tile,
@@ -119,22 +123,22 @@ class RulesEngine {
     // region 综合
 
     /** 综合分析：听牌 + 剩余张数 + 各听牌可达番种。 */
-    fun fullAnalysis(hand: Hand, tableState: TableState, winInfo: WinInfo? = null): AnalysisResult {
+    fun fullAnalysis(hand: Hand, tableState: TableState, winInfo: WinInfo? = null, wildcard: TileType? = null): AnalysisResult {
         if (hand.isValidWinSize()) {
             // 和牌态
-            val scored = scoreHand(hand, winInfo)
+            val scored = scoreHand(hand, winInfo, wildcard)
             return AnalysisResult(
                 isWin = true,
                 waitingTiles = emptyList(),
                 fanResults = scored
             )
         }
-        val waitsWithCount = calculateTenpaiWithCounts(hand, tableState)
+        val waitsWithCount = calculateTenpaiWithCounts(hand, tableState, wildcard)
         val waitsWithFans = waitsWithCount.map { wtc ->
             val testHand = hand.withConcealed(hand.concealed + wtc.tile)
             val info = winInfo?.copy(winTile = wtc.tile) ?: WinInfo(wtc.tile)
             val fans = wtc.decompositions.flatMap { decomp ->
-                FanScorer.score(FanContext(decomp, testHand, info)).counted
+                FanScorer.score(FanContext.of(decomp, testHand, info, wildcard)).counted
             }.distinctBy { it.id }
             WaitingTileWithFans(
                 tile = wtc.tile,

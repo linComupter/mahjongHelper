@@ -29,8 +29,9 @@ object FanReverseAnalyzer {
 
     /**
      * 主入口：按番种倒推 + 渐进深度 + 快速向听预检。
+     * @param wildcard 赖子牌（赖子模式）；null 为纯大模式。
      */
-    fun analyze(hand: Hand, tableState: TableState): List<SwapTarget> {
+    fun analyze(hand: Hand, tableState: TableState, wildcard: TileType? = null): List<SwapTarget> {
         val maxDepth = AnalysisSettings.swapDepth.coerceIn(1, AnalysisSettings.MAX_DEPTH)
         val totalRem = remainingTotal(hand, tableState, 136)
         val tenpaiSize = hand.concealedCountForTenpai()
@@ -70,13 +71,13 @@ object FanReverseAnalyzer {
                         if (newConc.size == tenpaiSize && newHand.isValidTenpaiSize()) {
                             // 快速预检：贪婪面子计数，淘汰明显不能听牌的
                             if (!preCheckTenpai(newHand)) continue
-                            val waits = TenpaiCalculator.waitingTiles(newHand)
-                            if (waits.isNotEmpty() && reachesTarget(rule, hand, discs, draws, waits)) {
+                            val waits = TenpaiCalculator.waitingTiles(newHand, wildcard = wildcard)
+                            if (waits.isNotEmpty() && reachesTarget(rule, hand, discs, draws, waits, wildcard)) {
                                 found.add(key)
                                 paths.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, waits, d))
                             }
-                        } else if (newConc.size == winSize && WinChecker.isWin(newHand)) {
-                            if (reachesTarget(rule, hand, discs, draws, emptyList())) {
+                        } else if (newConc.size == winSize && WinChecker.isWin(newHand, wildcard)) {
+                            if (reachesTarget(rule, hand, discs, draws, emptyList(), wildcard)) {
                                 found.add(key)
                                 paths.add(SwapPath(discs, draws, remMin, remMin.toDouble() / totalRem, emptyList(), d))
                             }
@@ -129,7 +130,7 @@ object FanReverseAnalyzer {
     }
 
     /** 验证替换后的手牌能到达目标番种。 */
-    private fun reachesTarget(rule: FanRule, hand: Hand, discs: List<TileType>, draws: List<TileType>, waits: List<TileType>): Boolean {
+    private fun reachesTarget(rule: FanRule, hand: Hand, discs: List<TileType>, draws: List<TileType>, waits: List<TileType>, wildcard: TileType? = null): Boolean {
         val afterDiscard = hand.concealed.toMutableList()
         for (d in discs) afterDiscard.remove(d)
         val baseConc = (afterDiscard + draws).sorted()
@@ -138,8 +139,8 @@ object FanReverseAnalyzer {
             val winHand = if (waits.isEmpty()) hand.withConcealed(baseConc)
                 else hand.withConcealed((baseConc + wait).sorted())
             if (!winHand.isValidWinSize() && waits.isNotEmpty()) return@any false
-            WinChecker.getAllDecompositions(winHand).any { decomp ->
-                val result = FanScorer.score(FanContext(decomp, winHand, WinInfo(wait)))
+            WinChecker.getAllDecompositions(winHand, wildcard).any { decomp ->
+                val result = FanScorer.score(FanContext.of(decomp, winHand, WinInfo(wait), wildcard))
                 result.meetsMinimum && result.allDetected.any { it.id == rule.id }
             }
         }
